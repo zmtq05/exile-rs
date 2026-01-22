@@ -1,0 +1,10 @@
+{
+	"$schema": "https://opencode.ai/config.json",
+	"plugin": ["@sveltejs/opencode"],
+    "mcp": {
+        "shadcn-svelte": {
+            "type": "remote",
+            "url": "https://shadcn-svelte.mastra.cloud/api/mcp/shadcn/mcp"
+        },
+    }
+}
