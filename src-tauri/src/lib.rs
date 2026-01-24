@@ -1,18 +1,34 @@
+mod commands;
+pub mod errors;
+pub mod pob;
+pub mod util;
+use std::time::Duration;
+
+use tauri::Manager;
 use tauri_plugin_tracing::{
-    tracing, Builder as TracingBuilder, LevelFilter, MaxFileSize, Rotation, RotationStrategy,
+    Builder as TracingBuilder, LevelFilter, MaxFileSize, Rotation, RotationStrategy,
 };
 use tauri_specta::{collect_commands, collect_events};
 
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-#[tauri::command]
-#[specta::specta]
-fn greet(name: &str) -> String {
-    tracing::debug!("greet command called with name: {}", name);
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
+use crate::pob::{
+    Installing,
+    google_drive::GoogleDriveClient,
+    manager::{CancelEvent, PobManager},
+    progress::InstallProgress,
+};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let client = reqwest::Client::builder()
+        .tls_backend_rustls()
+        .pool_max_idle_per_host(10)
+        .pool_idle_timeout(Duration::from_secs(90))
+        .tcp_keepalive(Duration::from_secs(60))
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(300))
+        .build()
+        .expect("Failed to build reqwest client");
+
     let specta_builder = specta_builder();
 
     tauri::Builder::default()
@@ -20,6 +36,9 @@ pub fn run() {
         .plugin(
             TracingBuilder::default()
                 .with_max_level(LevelFilter::DEBUG) // Set max log level to DEBUG
+                .with_target("exile_rs_lib", LevelFilter::TRACE)
+                .with_target("h2", LevelFilter::WARN)
+                .with_target("hyper", LevelFilter::WARN)
                 .with_colors()
                 .with_file_logging() // Enable file logging to platform log directory
                 .with_rotation(Rotation::Daily) // Rotate log files daily
@@ -33,8 +52,14 @@ pub fn run() {
                 .build(),
         )
         .invoke_handler(specta_builder.invoke_handler())
+        .manage(Installing::default())
         .setup(move |app| {
             specta_builder.mount_events(app.handle());
+
+            let client = GoogleDriveClient::new(client);
+
+            let pob_manager = PobManager::new(client, app.handle().clone());
+            app.manage(pob_manager);
 
             Ok(())
         })
@@ -42,15 +67,18 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
-fn specta_builder<R: tauri::Runtime>() -> tauri_specta::Builder<R> {
+fn specta_builder() -> tauri_specta::Builder {
     let builder = tauri_specta::Builder::new()
         .commands(collect_commands![
-            // commands
-            greet,
+            commands::fetch_pob,
+            commands::installed_pob_info,
+            commands::install_pob,
+            commands::cancel_install_pob,
+            commands::parse_version,
+            commands::uninstall_pob,
+            commands::execute_pob,
         ])
-        .events(collect_events![
-            // events
-        ]);
+        .events(collect_events![InstallProgress, CancelEvent,]);
 
     #[cfg(debug_assertions)]
     {

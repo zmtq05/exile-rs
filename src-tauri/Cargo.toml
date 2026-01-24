@@ -28,3 +28,16 @@ specta = { version = "=2.0.0-rc.22" }
 tauri-specta = { version = "=2.0.0-rc.21", features = ["derive", "typescript"] }
 specta-typescript = "0.0.9"
 
+tracing = "0.1.44"
+
+reqwest = { version = "0.13.1", features = ["stream"] }
+tokio = { version = "1.49.0", features = ["fs", "io-util"] }
+tokio-util = "0.7.18"
+futures-util = "0.3.31"
+zip = "7.1.0"
+regex = "1.12.2"
+html-escape = "0.2.13"
+thiserror = "2.0.18"
+chrono = "0.4.43"
+pin-project-lite = "0.2.16"
+scraper = "0.25.0"

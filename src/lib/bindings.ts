@@ -5,14 +5,69 @@
 
 
 export const commands = {
-async greet(name: string) : Promise<string> {
-    return await TAURI_INVOKE("greet", { name });
+async fetchPob(refresh: boolean) : Promise<Result<GoogleDriveFileInfo, ErrorKind>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("fetch_pob", { refresh }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async installedPobInfo() : Promise<Result<PobVersion | null, ErrorKind>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("installed_pob_info") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async installPob(fileData: GoogleDriveFileInfo | null) : Promise<Result<boolean, ErrorKind>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("install_pob", { fileData }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cancelInstallPob() : Promise<void> {
+    await TAURI_INVOKE("cancel_install_pob");
+},
+async parseVersion(fileName: string) : Promise<Result<string, ErrorKind>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("parse_version", { fileName }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async uninstallPob() : Promise<Result<null, ErrorKind>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("uninstall_pob") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async executePob() : Promise<Result<null, ErrorKind>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("execute_pob") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
 /** user-defined events **/
 
 
+export const events = __makeEvents__<{
+cancelEvent: CancelEvent,
+installProgress: InstallProgress
+}>({
+cancelEvent: "cancel-event",
+installProgress: "install-progress"
+})
 
 /** user-defined constants **/
 
@@ -20,7 +75,12 @@ async greet(name: string) : Promise<string> {
 
 /** user-defined types **/
 
-
+export type CancelEvent = null
+export type ErrorKind = { kind: "pobError"; message: string } | { kind: "tauriError"; message: string } | { kind: "io"; message: string }
+export type GoogleDriveFileInfo = { id: string; name: string; isFolder: boolean }
+export type InstallPhase = "downloading" | "extracting" | "backingUp" | "moving" | "restoring" | "finalizing" | "uninstalling"
+export type InstallProgress = ({ status: "started"; total_size?: number | null } | { status: "inProgress"; percent: number } | { status: "completed" } | { status: "failed"; reason: string } | { status: "cancelled" }) & { taskId: string; phase: InstallPhase }
+export type PobVersion = { version: string; installedAt: string; fileId: string }
 
 /** tauri-specta globals **/
 
