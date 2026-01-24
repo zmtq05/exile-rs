@@ -101,7 +101,7 @@ impl PobManager {
         let res = self.client.get_file(file_id).await?;
 
         let total_size = res.content_length().unwrap_or_else(|| {
-            tracing::warn!("Failed to get content length");
+            tracing::warn!(phase = "download", "Failed to get content length");
             0
         });
 
@@ -111,6 +111,7 @@ impl PobManager {
             && let Err(e) = f.set_len(total_size).await
         {
             tracing::warn!(
+                phase = "download",
                 path = %dst.as_ref().display(),
                 error = %e,
                 "Failed to preallocate file size"
@@ -137,7 +138,7 @@ impl PobManager {
         loop {
             tokio::select! {
                 _ = cancel_token.cancelled() => {
-                    tracing::info!("Download cancelled");
+                    tracing::info!(phase = "download", "Download cancelled");
                     // emit here
                     progress.derived(InstallStatus::Cancelled).report(&self.app);
                     _ = tokio::fs::remove_file(&dst).await;
@@ -164,7 +165,7 @@ impl PobManager {
                             last_report = Instant::now();
                         }
                         Some(Err(e)) => {
-                            tracing::error!(error = %e, "Error while downloading file");
+                            tracing::error!(phase = "download", error = %e, "Error while downloading file");
                             let progress = progress.derived(InstallStatus::Failed { reason: e.to_string() });
                             progress.report(&self.app);
                             return Err(PobError::DownloadFailed(e.to_string()));
@@ -172,7 +173,7 @@ impl PobManager {
                         None => {
                             writer.flush().await?;
 
-                            tracing::info!(elapsed = ?start.elapsed(), "Download completed");
+                            tracing::info!(phase = "download", elapsed = ?start.elapsed(), "Download completed");
                             let progress = progress.derived(InstallStatus::Completed);
                             progress.report(&self.app);
                             return Ok(());
@@ -209,6 +210,7 @@ impl PobManager {
             let skip_prefix = detect_nested_structure(&archive)?;
             if let Some(ref prefix) = skip_prefix {
                 tracing::warn!(
+                    phase = "extract",
                     prefix = %prefix.display(),
                     "Detected nested directory structure, will strip prefix during extraction"
                 );
@@ -226,10 +228,11 @@ impl PobManager {
 
             for i in 0..file_count {
                 if cancel_token.is_cancelled() {
-                    tracing::info!("Extraction cancelled");
+                    tracing::info!(phase = "extract", "Extraction cancelled");
                     progress.derived(InstallStatus::Cancelled).report(&app);
                     if let Err(e) = std::fs::remove_dir_all(&dest_path) {
                         tracing::warn!(
+                            phase = "extract",
                             path = %dest_path.display(),
                             error = %e,
                             "Failed to remove partially extracted directory"
@@ -241,7 +244,7 @@ impl PobManager {
                 let mut file = archive.by_index(i as usize)?;
 
                 let Some(outpath) = file.enclosed_name() else {
-                    tracing::warn!(name = file.name(), "Skipping dangerous path");
+                    tracing::warn!(phase = "extract", name = file.name(), "Skipping dangerous path");
                     continue;
                 };
 
@@ -294,7 +297,7 @@ impl PobManager {
     }
 
     pub async fn backup(&self) -> Result<(), PobError> {
-        tracing::info!("Starting backup");
+        tracing::info!(phase = "backup", "Starting backup");
         let progress = InstallProgress {
             task_id: "pob:backup".to_string(),
             phase: InstallPhase::BackingUp,
@@ -303,7 +306,8 @@ impl PobManager {
         progress.report(&self.app);
 
         let install_path = self.install_path();
-        tracing::info!(
+        tracing::debug!(
+            phase = "backup",
             install_path = %install_path.display(),
             exists = %install_path.exists(),
             "Backup source path"
@@ -312,7 +316,8 @@ impl PobManager {
         // write to `<backup_dir>/backup.new`
         let existing_backup = self.backup_dir();
         let backup_path = self.backup_dir().with_extension("new");
-        tracing::info!(
+        tracing::debug!(
+            phase = "backup",
             backup_new = %backup_path.display(),
             existing_backup = %existing_backup.display(),
             "Backup paths determined"
@@ -323,12 +328,12 @@ impl PobManager {
             tokio::fs::remove_dir_all(&backup_path).await?;
         }
         tokio::fs::create_dir_all(&backup_path).await?;
-        tracing::info!(path = %backup_path.display(), "Created backup.new directory");
+        tracing::debug!(phase = "backup", path = %backup_path.display(), "Created backup.new directory");
 
         for relative_path in self.backup_targets() {
             let absolute_path = install_path.join(&relative_path);
             if !absolute_path.exists() {
-                tracing::info!(path = %relative_path.display(), "Backup target does not exist, skipping");
+                tracing::debug!(phase = "backup", path = %relative_path.display(), "Backup target does not exist, skipping");
                 continue;
             }
 
@@ -343,12 +348,13 @@ impl PobManager {
                 tokio::fs::copy(&absolute_path, &backup_target_path).await?;
             }
         }
-        tracing::info!("Backup copy completed");
+        tracing::info!(phase = "backup", "Backup copy completed");
         progress.derived(InstallStatus::Completed).report(&self.app);
 
         // finalize: swap backup.new -> backup (with .old staging if exists)
         let old = existing_backup.with_extension("old");
-        tracing::info!(
+        tracing::debug!(
+            phase = "backup",
             backup_new = %backup_path.display(),
             existing = %existing_backup.display(),
             existing_exists = %existing_backup.exists(),
@@ -357,16 +363,16 @@ impl PobManager {
         );
 
         if existing_backup.exists() {
-            tracing::info!("Moving existing backup to .old");
+            tracing::debug!(phase = "backup", "Moving existing backup to .old");
             fs::rename(&existing_backup, &old).await?;
         }
-        tracing::info!("Moving backup.new to backup");
+        tracing::debug!(phase = "backup", "Moving backup.new to backup");
         fs::rename(&backup_path, &existing_backup).await?;
         if old.exists() {
-            tracing::info!("Cleaning up backup.old");
+            tracing::debug!(phase = "backup", "Cleaning up backup.old");
             fs::remove_dir_all(&old).await.ok(); // best-effort cleanup
         }
-        tracing::info!("Backup finalized");
+        tracing::info!(phase = "backup", "Backup finalized");
 
         Ok(())
     }
@@ -384,7 +390,7 @@ impl PobManager {
     }
 
     pub async fn restore(&self) -> Result<(), PobError> {
-        tracing::info!("Starting restore from backup");
+        tracing::info!(phase = "restore", "Starting restore from backup");
         let progress = InstallProgress {
             task_id: "pob:restore".to_string(),
             phase: InstallPhase::Restoring,
@@ -396,7 +402,7 @@ impl PobManager {
         let backup_path = self.backup_dir();
 
         if !backup_path.exists() {
-            tracing::warn!("No backup directory found, skipping restore (likely first install)");
+            tracing::warn!(phase = "restore", "No backup directory found, skipping restore (likely first install)");
             progress.derived(InstallStatus::Completed).report(&self.app);
             return Ok(());
         }
@@ -406,7 +412,7 @@ impl PobManager {
         for relative_path in target_paths {
             let backup_target_path = backup_path.join(&relative_path);
             if !backup_target_path.exists() {
-                tracing::info!(path = %relative_path.display(), "Backup target does not exist, skipping");
+                tracing::debug!(phase = "restore", path = %relative_path.display(), "Backup target does not exist, skipping");
                 continue;
             }
 
@@ -421,7 +427,7 @@ impl PobManager {
                 tokio::fs::copy(&backup_target_path, &restore_target_path).await?;
             }
         }
-        tracing::info!("Restore completed");
+        tracing::info!(phase = "restore", "Restore completed");
         progress.derived(InstallStatus::Completed).report(&self.app);
 
         Ok(())
@@ -444,6 +450,7 @@ impl PobManager {
 
     pub async fn rename(&self, extracted: &Path, install_dir: &Path) -> Result<(), PobError> {
         tracing::info!(
+            phase = "rename",
             from = %extracted.display(),
             to = %install_dir.display(),
             "rename() called"
@@ -458,7 +465,8 @@ impl PobManager {
 
         // move existing to .old
         let old = install_dir.with_extension("old");
-        tracing::info!(
+        tracing::debug!(
+            phase = "rename",
             install_dir = %install_dir.display(),
             exists = %install_dir.exists(),
             old = %old.display(),
@@ -466,11 +474,12 @@ impl PobManager {
         );
 
         if install_dir.exists() {
-            tracing::info!("Moving existing install to .old");
+            tracing::info!(phase = "rename", "Moving existing install to .old");
 
             // Remove orphaned .old directory from previous failed installation
             if old.exists() {
                 tracing::warn!(
+                    phase = "rename",
                     path = %old.display(),
                     "Removing orphaned .old directory from previous failed installation"
                 );
@@ -478,13 +487,14 @@ impl PobManager {
             }
 
             tokio::fs::rename(install_dir, &old).await?;
-            tracing::info!("Existing install moved to .old");
+            tracing::info!(phase = "rename", "Existing install moved to .old");
         } else {
-            tracing::info!("No existing install, skipping .old rename");
+            tracing::info!(phase = "rename", "No existing install, skipping .old rename");
         }
 
         // move new in place
-        tracing::info!(
+        tracing::debug!(
+            phase = "rename",
             from = %extracted.display(),
             to = %install_dir.display(),
             from_exists = %extracted.exists(),
@@ -495,6 +505,7 @@ impl PobManager {
         // 향후 커스텀 설치 경로 지원 시 async_copy_dir_recursive fallback 추가 필요
         tokio::fs::rename(extracted, install_dir).await?;
         tracing::info!(
+            phase = "rename",
             install_dir = %install_dir.display(),
             exists_after = %install_dir.exists(),
             "Rename completed"
@@ -519,13 +530,14 @@ fn detect_nested_structure(
             if let Some(pos) = name.find(required_folder) {
                 if pos == 0 {
                     // "POE1 POB/..." - top level, OK
-                    tracing::info!("ZIP structure validated: top-level folders found");
+                    tracing::info!(phase = "extract", "ZIP structure validated: top-level folders found");
                     return Ok(None);
                 } else {
                     // "PoeCharm/POE1 POB/..." - nested structure
                     let prefix = &name[..pos];
                     let prefix = prefix.trim_end_matches('/');
                     tracing::warn!(
+                        phase = "extract",
                         prefix = %prefix,
                         example_file = %name,
                         "Detected nested directory structure in ZIP"

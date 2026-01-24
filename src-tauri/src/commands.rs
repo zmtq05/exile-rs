@@ -44,7 +44,7 @@ pub async fn installed_pob_info(manager: State<'_, PobManager>) -> Result<Option
 pub async fn uninstall_pob(manager: State<'_, PobManager>, app: AppHandle) -> Result<()> {
     let path = manager.install_path();
     if path.exists() {
-        tracing::info!("Uninstalling POB files");
+        tracing::info!(phase = "uninstall", path = %path.display(), "Starting uninstall");
         let progress = InstallProgress::new(
             "pob:uninstall",
             InstallPhase::Uninstalling,
@@ -54,8 +54,9 @@ pub async fn uninstall_pob(manager: State<'_, PobManager>, app: AppHandle) -> Re
 
         tokio::fs::remove_dir_all(&path).await?;
         progress.derived(InstallStatus::Completed).report(&app);
+        tracing::info!(phase = "uninstall", "Uninstall completed");
     } else {
-        tracing::info!("No POB installation found, skipping uninstall");
+        tracing::debug!(phase = "uninstall", "No installation found, skipping");
     }
 
     Ok(())
@@ -95,7 +96,7 @@ async fn install_pob_internal(
     };
 
     let install_path = manager.install_path();
-    tracing::info!(path = %install_path.display(), "Install path determined");
+    tracing::info!(phase = "init", path = %install_path.display(), "Install path determined");
 
     let temp_dir = app.path().temp_dir()?;
     let mut temp_zip_path = temp_dir.join(&file_info.name).with_extension("part");
@@ -113,6 +114,7 @@ async fn install_pob_internal(
     match result {
         Err(e) => {
             tracing::error!(
+                phase = "download",
                 error = %e,
                 "Failed to download POB file from Google Drive. Clean up temporary file."
             );
@@ -130,6 +132,7 @@ async fn install_pob_internal(
     // 2. extract to <INSTALL_PATH>.new
     let extract_dir = install_path.with_extension("new");
     tracing::info!(
+        phase = "extract",
         from = %temp_zip_path.display(),
         to = %extract_dir.display(),
         "Extracting to .new directory"
@@ -141,74 +144,76 @@ async fn install_pob_internal(
 
     // Cleanup temp ZIP on extract failure/cancellation
     if extract_result.is_err() {
-        tracing::info!(path = %temp_zip_path.display(), "Cleaning up temp ZIP file after extract failure");
+        tracing::info!(operation = "cleanup", path = %temp_zip_path.display(), "Cleaning up temp ZIP file after extract failure");
         tokio::fs::remove_file(&temp_zip_path).await.ok();
     }
 
     extract_result?;
-    tracing::info!(path = %extract_dir.display(), exists = %extract_dir.exists(), "Extract completed");
+    tracing::info!(phase = "extract", path = %extract_dir.display(), exists = %extract_dir.exists(), "Extract completed");
 
     // 3. backup existing
-    tracing::info!("Starting backup phase");
+    tracing::info!(phase = "backup", "Starting backup phase");
     manager.backup().await?;
-    tracing::info!("Backup completed");
+    tracing::info!(phase = "backup", "Backup completed");
 
     let result = async {
         // 4. move new installation
         tracing::info!(
+            phase = "rename",
             from = %extract_dir.display(),
             to = %install_path.display(),
             "Starting rename phase"
         );
         manager.rename(&extract_dir, &install_path).await?;
-        tracing::info!("Rename completed");
+        tracing::info!(phase = "rename", "Rename completed");
 
         // 5. restore
-        tracing::info!("Starting restore phase");
+        tracing::info!(phase = "restore", "Starting restore phase");
         manager.restore().await?;
-        tracing::info!("Restore completed");
+        tracing::info!(phase = "restore", "Restore completed");
 
         // 6. save version info
-        tracing::info!("Saving version info");
+        tracing::info!(phase = "finalize", "Saving version info");
         let version = PobVersion::try_from(&file_info)?;
         manager.save_version_info(&version).await?;
-        tracing::info!("Version info saved");
+        tracing::info!(phase = "finalize", "Version info saved");
         Ok::<(), PobError>(())
     }
     .await;
 
     if let Err(e) = result {
-        tracing::error!(error = %e, "Installation failed, attempting rollback");
+        tracing::error!(phase = "rollback", error = %e, "Installation failed, attempting rollback");
 
         // Rollback: restore from .old if exists
         let old_path = install_path.with_extension("old");
         if old_path.exists() {
-            tracing::info!(path = %old_path.display(), "Restoring from .old");
+            tracing::info!(phase = "rollback", path = %old_path.display(), "Restoring from .old");
 
             // Remove partial installation
             if install_path.exists() {
-                tracing::warn!("Removing partial installation");
+                tracing::warn!(phase = "rollback", "Removing partial installation");
                 tokio::fs::remove_dir_all(&install_path).await.ok();
             }
 
             // Restore from .old
             if let Err(rollback_err) = tokio::fs::rename(&old_path, &install_path).await {
                 tracing::error!(
+                    phase = "rollback",
                     error = %rollback_err,
                     old = %old_path.display(),
                     target = %install_path.display(),
                     "CRITICAL: Failed to rollback from .old, manual intervention required"
                 );
             } else {
-                tracing::info!("Successfully restored from .old");
+                tracing::info!(phase = "rollback", "Successfully restored from .old");
             }
         } else {
-            tracing::warn!("No .old directory to rollback from");
+            tracing::warn!(phase = "rollback", "No .old directory to rollback from");
         }
 
         // Cleanup: remove .new if exists
         if extract_dir.exists() {
-            tracing::info!(path = %extract_dir.display(), "Cleaning up .new directory");
+            tracing::info!(operation = "cleanup", path = %extract_dir.display(), "Cleaning up .new directory");
             tokio::fs::remove_dir_all(&extract_dir).await.ok();
         }
 
@@ -216,14 +221,14 @@ async fn install_pob_internal(
     }
 
     // Success: cleanup .old and .new
-    tracing::info!("Installation successful, cleaning up temporary directories");
+    tracing::info!(operation = "cleanup", "Installation successful, cleaning up temporary directories");
     let old_path = install_path.with_extension("old");
     if old_path.exists() {
-        tracing::debug!(path = %old_path.display(), "Removing .old");
+        tracing::debug!(operation = "cleanup", path = %old_path.display(), "Removing .old");
         tokio::fs::remove_dir_all(&old_path).await.ok();
     }
     if extract_dir.exists() {
-        tracing::debug!(path = %extract_dir.display(), "Removing .new");
+        tracing::debug!(operation = "cleanup", path = %extract_dir.display(), "Removing .new");
         tokio::fs::remove_dir_all(&extract_dir).await.ok();
     }
 
@@ -249,7 +254,7 @@ pub async fn execute_pob(manager: State<'_, PobManager>) -> Result<()> {
         )));
     }
 
-    tracing::info!(path = %exe_path.display(), "Launching POB executable");
+    tracing::info!(operation = "execute", path = %exe_path.display(), "Launching POB executable");
     tokio::process::Command::new(exe_path)
         .stdin(Stdio::null())
         .stderr(Stdio::null())
