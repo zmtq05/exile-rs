@@ -1,4 +1,7 @@
-use std::{process::Stdio, sync::atomic::Ordering};
+use std::{
+    process::Stdio,
+    sync::{Arc, atomic::Ordering},
+};
 
 use tauri::{AppHandle, Manager, State};
 use tauri_specta::Event;
@@ -10,9 +13,10 @@ use crate::{
         error::PobError,
         google_drive::GoogleDriveFileInfo,
         manager::{CancelEvent, PobManager},
-        progress::{InstallPhase, InstallProgress, InstallStatus},
+        progress::{InstallPhase, InstallReporter, InstallStatus, TauriProgressSink},
         version::PobVersion,
     },
+    util::generate_task_id,
 };
 
 type Result<T, E = ErrorKind> = std::result::Result<T, E>;
@@ -44,16 +48,17 @@ pub async fn installed_pob_info(manager: State<'_, PobManager>) -> Result<Option
 pub async fn uninstall_pob(manager: State<'_, PobManager>, app: AppHandle) -> Result<()> {
     let path = manager.install_path();
     if path.exists() {
+        let task_id = generate_task_id("pob");
+        let reporter = InstallReporter::new(task_id, Arc::new(TauriProgressSink::new(app)));
+
         tracing::info!(phase = "uninstall", path = %path.display(), "Starting uninstall");
-        let progress = InstallProgress::new(
-            "pob:uninstall",
+        reporter.report(
             InstallPhase::Uninstalling,
             InstallStatus::Started { total_size: None },
         );
-        progress.report(&app);
 
         tokio::fs::remove_dir_all(&path).await?;
-        progress.derived(InstallStatus::Completed).report(&app);
+        reporter.report(InstallPhase::Uninstalling, InstallStatus::Completed);
         tracing::info!(phase = "uninstall", "Uninstall completed");
     } else {
         tracing::debug!(phase = "uninstall", "No installation found, skipping");
@@ -90,6 +95,11 @@ async fn install_pob_internal(
     app: AppHandle,
 ) -> Result<bool> {
     tracing::info!("=== INSTALL START ===");
+
+    // Create reporter with unique task_id for this install operation
+    let task_id = generate_task_id("pob");
+    let reporter = InstallReporter::new(task_id, Arc::new(TauriProgressSink::new(app.clone())));
+
     let file_info = match file_data {
         Some(data) => data,
         None => manager.fetch_latest_file(false).await?,
@@ -109,7 +119,12 @@ async fn install_pob_internal(
 
     // 1. download zip to <TEMP>/<FILE_NAME>.part
     let result = manager
-        .download_with_progress(&file_info.id, &temp_zip_path, cancel_token.clone())
+        .download_with_progress(
+            &file_info.id,
+            &temp_zip_path,
+            cancel_token.clone(),
+            &reporter,
+        )
         .await;
     match result {
         Err(e) => {
@@ -139,7 +154,12 @@ async fn install_pob_internal(
     );
 
     let extract_result = manager
-        .extract_with_progress(&temp_zip_path, &extract_dir, cancel_token.clone())
+        .extract_with_progress(
+            &temp_zip_path,
+            &extract_dir,
+            cancel_token.clone(),
+            reporter.clone(),
+        )
         .await;
 
     // Cleanup temp ZIP on extract failure/cancellation
@@ -153,7 +173,7 @@ async fn install_pob_internal(
 
     // 3. backup existing
     tracing::info!(phase = "backup", "Starting backup phase");
-    manager.backup().await?;
+    manager.backup(&reporter).await?;
     tracing::info!(phase = "backup", "Backup completed");
 
     let result = async {
@@ -164,12 +184,14 @@ async fn install_pob_internal(
             to = %install_path.display(),
             "Starting rename phase"
         );
-        manager.rename(&extract_dir, &install_path).await?;
+        manager
+            .rename(&extract_dir, &install_path, &reporter)
+            .await?;
         tracing::info!(phase = "rename", "Rename completed");
 
         // 5. restore
         tracing::info!(phase = "restore", "Starting restore phase");
-        manager.restore().await?;
+        manager.restore(&reporter).await?;
         tracing::info!(phase = "restore", "Restore completed");
 
         // 6. save version info
@@ -221,7 +243,10 @@ async fn install_pob_internal(
     }
 
     // Success: cleanup .old and .new
-    tracing::info!(operation = "cleanup", "Installation successful, cleaning up temporary directories");
+    tracing::info!(
+        operation = "cleanup",
+        "Installation successful, cleaning up temporary directories"
+    );
     let old_path = install_path.with_extension("old");
     if old_path.exists() {
         tracing::debug!(operation = "cleanup", path = %old_path.display(), "Removing .old");

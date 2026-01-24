@@ -2,6 +2,29 @@ use std::path::Path;
 
 use zip::DateTime;
 
+/// Generate a unique task ID with prefix, timestamp, and random suffix.
+/// Format: `{prefix}_{timestamp_hex}_{random_hex}`
+/// Example: `pob_18abc1234def_a3f2`
+pub fn generate_task_id(prefix: &str) -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+
+    // Simple random using timestamp nanoseconds as seed
+    let random: u16 = {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .subsec_nanos();
+        (nanos & 0xFFFF) as u16
+    };
+
+    format!("{prefix}_{timestamp:x}_{random:04x}")
+}
+
 pub async fn async_copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), std::io::Error> {
     tokio::fs::create_dir_all(dst).await?;
     let mut entries = tokio::fs::read_dir(src).await?;

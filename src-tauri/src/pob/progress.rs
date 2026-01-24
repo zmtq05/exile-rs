@@ -1,8 +1,73 @@
-use std::num::NonZeroU32;
+use std::{num::NonZeroU32, sync::Arc};
 
 use serde::Serialize;
 use specta::Type;
 use tauri_specta::Event;
+
+// ============================================================================
+// Progress Sink Abstraction
+// ============================================================================
+
+/// Trait for emitting progress events. Enables testing without Tauri runtime.
+pub trait ProgressSink: Send + Sync {
+    fn emit(&self, progress: InstallProgress);
+}
+
+/// Reporter that holds task_id and sink. Clone-friendly for spawn_blocking.
+#[derive(Clone)]
+pub struct InstallReporter {
+    task_id: String,
+    sink: Arc<dyn ProgressSink>,
+}
+
+impl InstallReporter {
+    pub fn new(task_id: impl Into<String>, sink: Arc<dyn ProgressSink>) -> Self {
+        Self {
+            task_id: task_id.into(),
+            sink,
+        }
+    }
+
+    /// Report progress with the stored task_id.
+    pub fn report(&self, phase: InstallPhase, status: InstallStatus) {
+        self.sink
+            .emit(InstallProgress::new(&self.task_id, phase, status));
+    }
+
+    /// Get the task_id for this reporter.
+    pub fn task_id(&self) -> &str {
+        &self.task_id
+    }
+}
+
+/// Tauri implementation of ProgressSink.
+pub struct TauriProgressSink {
+    app: tauri::AppHandle,
+}
+
+impl TauriProgressSink {
+    pub fn new(app: tauri::AppHandle) -> Self {
+        Self { app }
+    }
+}
+
+impl ProgressSink for TauriProgressSink {
+    fn emit(&self, progress: InstallProgress) {
+        if let Err(e) = progress.emit(&self.app) {
+            tracing::warn!(
+                task_id = %progress.task_id,
+                phase = ?progress.phase,
+                status = ?progress.status,
+                error = %e,
+                "Failed to emit install progress event"
+            );
+        }
+    }
+}
+
+// ============================================================================
+// InstallProgress (Event Payload)
+// ============================================================================
 
 #[derive(Debug, Clone, Serialize, Type, Event)]
 #[serde(rename_all = "camelCase")]
@@ -19,26 +84,6 @@ impl InstallProgress {
             task_id: task_id.into(),
             phase,
             status,
-        }
-    }
-
-    pub fn derived(&self, status: InstallStatus) -> Self {
-        Self {
-            task_id: self.task_id.clone(),
-            phase: self.phase,
-            status,
-        }
-    }
-
-    pub fn report(&self, app: &tauri::AppHandle) {
-        if let Err(e) = self.emit(app) {
-            tracing::warn!(
-                task_id = %self.task_id,
-                phase = ?self.phase,
-                status = ?self.status,
-                error = %e,
-                "Failed to emit install progress event"
-            );
         }
     }
 }

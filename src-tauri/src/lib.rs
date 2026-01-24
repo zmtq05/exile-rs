@@ -58,7 +58,12 @@ pub fn run() {
 
             let client = GoogleDriveClient::new(client);
 
-            let pob_manager = PobManager::new(client, app.handle().clone());
+            let data_dir = app
+                .path()
+                .app_local_data_dir()
+                .expect("Failed to get app local data dir");
+
+            let pob_manager = PobManager::new(client, data_dir);
             app.manage(pob_manager);
 
             Ok(())

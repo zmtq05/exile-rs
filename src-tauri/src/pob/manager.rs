@@ -8,7 +8,6 @@ use std::{
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tauri::{AppHandle, Manager};
 use tauri_specta::Event;
 use tokio::{
     fs,
@@ -21,7 +20,7 @@ use crate::{
     pob::{
         error::PobError,
         google_drive::{GoogleDriveClient, GoogleDriveFileInfo},
-        progress::{InstallPhase, InstallProgress, InstallStatus},
+        progress::{InstallPhase, InstallReporter, InstallStatus},
         version::PobVersion,
     },
     util::{async_copy_dir_recursive, datetime_to_systemtime},
@@ -29,29 +28,37 @@ use crate::{
 
 pub struct PobManager {
     client: GoogleDriveClient,
-    app: AppHandle,
+    data_dir: PathBuf,
 
     cached_result: Mutex<HashMap<String, GoogleDriveFileInfo>>,
 }
 
 impl PobManager {
-    pub fn new(client: GoogleDriveClient, app: AppHandle) -> Self {
+    pub fn new(client: GoogleDriveClient, data_dir: PathBuf) -> Self {
         Self {
             client,
-            app,
+            data_dir,
             cached_result: Mutex::new(HashMap::new()),
         }
     }
 
     pub fn install_path(&self) -> PathBuf {
-        self.app
-            .path()
-            .app_local_data_dir()
-            .unwrap()
-            .join("PoeCharm")
+        self.data_dir.join("PoeCharm")
     }
 
     pub fn version_file_path(&self) -> PathBuf {
+        self.install_path().join("pob_version.json")
+    }
+
+    pub fn backup_dir(&self) -> PathBuf {
+        self.data_dir.join("backup")
+    }
+
+    pub fn exe_path(&self) -> PathBuf {
+        self.install_path().join("PoeCharm3.exe")
+    }
+
+    pub fn pob_version_file_path(&self) -> PathBuf {
         self.install_path().join("pob_version.json")
     }
 
@@ -96,8 +103,8 @@ impl PobManager {
         file_id: &str,
         dst: P,
         cancel_token: CancellationToken,
+        reporter: &InstallReporter,
     ) -> Result<(), PobError> {
-        const TASK_ID: &str = "pob:download";
         let res = self.client.get_file(file_id).await?;
 
         let total_size = res.content_length().unwrap_or_else(|| {
@@ -118,15 +125,12 @@ impl PobManager {
             );
         }
 
-        let progress = InstallProgress::new(
-            TASK_ID,
+        reporter.report(
             InstallPhase::Downloading,
             InstallStatus::Started {
                 total_size: NonZeroU32::new(total_size as u32),
             },
         );
-
-        progress.report(&self.app);
 
         let start = Instant::now();
         let mut stream = res.bytes_stream();
@@ -139,8 +143,7 @@ impl PobManager {
             tokio::select! {
                 _ = cancel_token.cancelled() => {
                     tracing::info!(phase = "download", "Download cancelled");
-                    // emit here
-                    progress.derived(InstallStatus::Cancelled).report(&self.app);
+                    reporter.report(InstallPhase::Downloading, InstallStatus::Cancelled);
                     _ = tokio::fs::remove_file(&dst).await;
                     return Err(PobError::Cancelled);
                 }
@@ -160,22 +163,19 @@ impl PobManager {
                                 0.0
                             };
 
-                            let progress = progress.derived(InstallStatus::InProgress { percent });
-                            progress.report(&self.app);
+                            reporter.report(InstallPhase::Downloading, InstallStatus::InProgress { percent });
                             last_report = Instant::now();
                         }
                         Some(Err(e)) => {
                             tracing::error!(phase = "download", error = %e, "Error while downloading file");
-                            let progress = progress.derived(InstallStatus::Failed { reason: e.to_string() });
-                            progress.report(&self.app);
+                            reporter.report(InstallPhase::Downloading, InstallStatus::Failed { reason: e.to_string() });
                             return Err(PobError::DownloadFailed(e.to_string()));
                         }
                         None => {
                             writer.flush().await?;
 
                             tracing::info!(phase = "download", elapsed = ?start.elapsed(), "Download completed");
-                            let progress = progress.derived(InstallStatus::Completed);
-                            progress.report(&self.app);
+                            reporter.report(InstallPhase::Downloading, InstallStatus::Completed);
                             return Ok(());
                         }
                     }
@@ -189,19 +189,17 @@ impl PobManager {
         zip_path: P,
         dest_path: P,
         cancel_token: CancellationToken,
+        reporter: InstallReporter,
     ) -> Result<(), PobError> {
         if dest_path.as_ref().exists() {
             tokio::fs::remove_dir_all(&dest_path).await?;
         }
         tokio::fs::create_dir_all(&dest_path).await?;
 
-        let app = self.app.clone();
         let zip_path = zip_path.as_ref().to_path_buf();
         let dest_path = dest_path.as_ref().to_path_buf();
 
         let task = tokio::task::spawn_blocking(move || -> Result<(), PobError> {
-            const TASK_ID: &str = "pob:extract";
-
             let f = std::fs::File::open(&zip_path)?;
             let mut archive = zip::ZipArchive::new(f)?;
             let file_count = archive.len() as u32;
@@ -216,20 +214,18 @@ impl PobManager {
                 );
             }
 
-            let progress = InstallProgress {
-                task_id: TASK_ID.to_string(),
-                phase: InstallPhase::Extracting,
-                status: InstallStatus::Started {
+            reporter.report(
+                InstallPhase::Extracting,
+                InstallStatus::Started {
                     total_size: NonZeroU32::new(file_count),
                 },
-            };
-            progress.report(&app);
+            );
             let mut last_report = Instant::now();
 
             for i in 0..file_count {
                 if cancel_token.is_cancelled() {
                     tracing::info!(phase = "extract", "Extraction cancelled");
-                    progress.derived(InstallStatus::Cancelled).report(&app);
+                    reporter.report(InstallPhase::Extracting, InstallStatus::Cancelled);
                     if let Err(e) = std::fs::remove_dir_all(&dest_path) {
                         tracing::warn!(
                             phase = "extract",
@@ -244,7 +240,11 @@ impl PobManager {
                 let mut file = archive.by_index(i as usize)?;
 
                 let Some(outpath) = file.enclosed_name() else {
-                    tracing::warn!(phase = "extract", name = file.name(), "Skipping dangerous path");
+                    tracing::warn!(
+                        phase = "extract",
+                        name = file.name(),
+                        "Skipping dangerous path"
+                    );
                     continue;
                 };
 
@@ -280,30 +280,26 @@ impl PobManager {
                     continue;
                 }
                 let percent = (i + 1) as f64 / file_count as f64 * 100.0;
-                let progress = progress.derived(InstallStatus::InProgress { percent });
-                progress.report(&app);
+                reporter.report(
+                    InstallPhase::Extracting,
+                    InstallStatus::InProgress { percent },
+                );
                 last_report = Instant::now();
             }
 
-            progress.derived(InstallStatus::Completed).report(&app);
+            reporter.report(InstallPhase::Extracting, InstallStatus::Completed);
             Ok(())
         });
 
         task.await?
     }
 
-    pub fn backup_dir(&self) -> PathBuf {
-        self.app.path().app_local_data_dir().unwrap().join("backup")
-    }
-
-    pub async fn backup(&self) -> Result<(), PobError> {
+    pub async fn backup(&self, reporter: &InstallReporter) -> Result<(), PobError> {
         tracing::info!(phase = "backup", "Starting backup");
-        let progress = InstallProgress {
-            task_id: "pob:backup".to_string(),
-            phase: InstallPhase::BackingUp,
-            status: InstallStatus::Started { total_size: None },
-        };
-        progress.report(&self.app);
+        reporter.report(
+            InstallPhase::BackingUp,
+            InstallStatus::Started { total_size: None },
+        );
 
         let install_path = self.install_path();
         tracing::debug!(
@@ -349,7 +345,7 @@ impl PobManager {
             }
         }
         tracing::info!(phase = "backup", "Backup copy completed");
-        progress.derived(InstallStatus::Completed).report(&self.app);
+        reporter.report(InstallPhase::BackingUp, InstallStatus::Completed);
 
         // finalize: swap backup.new -> backup (with .old staging if exists)
         let old = existing_backup.with_extension("old");
@@ -389,21 +385,22 @@ impl PobManager {
         TARGETS.iter().map(PathBuf::from).collect()
     }
 
-    pub async fn restore(&self) -> Result<(), PobError> {
+    pub async fn restore(&self, reporter: &InstallReporter) -> Result<(), PobError> {
         tracing::info!(phase = "restore", "Starting restore from backup");
-        let progress = InstallProgress {
-            task_id: "pob:restore".to_string(),
-            phase: InstallPhase::Restoring,
-            status: InstallStatus::Started { total_size: None },
-        };
-        progress.report(&self.app);
+        reporter.report(
+            InstallPhase::Restoring,
+            InstallStatus::Started { total_size: None },
+        );
 
         let install_path = self.install_path();
         let backup_path = self.backup_dir();
 
         if !backup_path.exists() {
-            tracing::warn!(phase = "restore", "No backup directory found, skipping restore (likely first install)");
-            progress.derived(InstallStatus::Completed).report(&self.app);
+            tracing::warn!(
+                phase = "restore",
+                "No backup directory found, skipping restore (likely first install)"
+            );
+            reporter.report(InstallPhase::Restoring, InstallStatus::Completed);
             return Ok(());
         }
 
@@ -428,13 +425,9 @@ impl PobManager {
             }
         }
         tracing::info!(phase = "restore", "Restore completed");
-        progress.derived(InstallStatus::Completed).report(&self.app);
+        reporter.report(InstallPhase::Restoring, InstallStatus::Completed);
 
         Ok(())
-    }
-
-    pub fn pob_version_file_path(&self) -> PathBuf {
-        self.install_path().join("pob_version.json")
     }
 
     pub async fn save_version_info(&self, version: &PobVersion) -> Result<(), PobError> {
@@ -444,11 +437,12 @@ impl PobManager {
         Ok(())
     }
 
-    pub fn exe_path(&self) -> PathBuf {
-        self.install_path().join("PoeCharm3.exe")
-    }
-
-    pub async fn rename(&self, extracted: &Path, install_dir: &Path) -> Result<(), PobError> {
+    pub async fn rename(
+        &self,
+        extracted: &Path,
+        install_dir: &Path,
+        reporter: &InstallReporter,
+    ) -> Result<(), PobError> {
         tracing::info!(
             phase = "rename",
             from = %extracted.display(),
@@ -456,12 +450,10 @@ impl PobManager {
             "rename() called"
         );
 
-        let progress = InstallProgress::new(
-            "pob:install",
+        reporter.report(
             InstallPhase::Moving,
             InstallStatus::Started { total_size: None },
         );
-        progress.report(&self.app);
 
         // move existing to .old
         let old = install_dir.with_extension("old");
@@ -489,7 +481,10 @@ impl PobManager {
             tokio::fs::rename(install_dir, &old).await?;
             tracing::info!(phase = "rename", "Existing install moved to .old");
         } else {
-            tracing::info!(phase = "rename", "No existing install, skipping .old rename");
+            tracing::info!(
+                phase = "rename",
+                "No existing install, skipping .old rename"
+            );
         }
 
         // move new in place
@@ -511,7 +506,7 @@ impl PobManager {
             "Rename completed"
         );
 
-        progress.derived(InstallStatus::Completed).report(&self.app);
+        reporter.report(InstallPhase::Moving, InstallStatus::Completed);
 
         Ok(())
     }
@@ -530,7 +525,10 @@ fn detect_nested_structure(
             if let Some(pos) = name.find(required_folder) {
                 if pos == 0 {
                     // "POE1 POB/..." - top level, OK
-                    tracing::info!(phase = "extract", "ZIP structure validated: top-level folders found");
+                    tracing::info!(
+                        phase = "extract",
+                        "ZIP structure validated: top-level folders found"
+                    );
                     return Ok(None);
                 } else {
                     // "PoeCharm/POE1 POB/..." - nested structure
