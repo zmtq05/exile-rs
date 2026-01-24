@@ -98,7 +98,7 @@ impl PobManager {
         Ok(Some(installed))
     }
 
-    pub async fn download_with_progress<P: AsRef<std::path::Path>>(
+    pub(crate) async fn download_with_progress<P: AsRef<std::path::Path>>(
         &self,
         file_id: &str,
         dst: P,
@@ -184,7 +184,7 @@ impl PobManager {
         }
     }
 
-    pub async fn extract_with_progress<P: AsRef<std::path::Path>>(
+    pub(crate) async fn extract_with_progress<P: AsRef<std::path::Path>>(
         &self,
         zip_path: P,
         dest_path: P,
@@ -294,7 +294,7 @@ impl PobManager {
         task.await?
     }
 
-    pub async fn backup(&self, reporter: &InstallReporter) -> Result<(), PobError> {
+    pub(crate) async fn backup(&self, reporter: &InstallReporter) -> Result<(), PobError> {
         tracing::info!(phase = "backup", "Starting backup");
         reporter.report(
             InstallPhase::BackingUp,
@@ -373,7 +373,7 @@ impl PobManager {
         Ok(())
     }
 
-    pub fn backup_targets(&self) -> Vec<PathBuf> {
+    pub(crate) fn backup_targets(&self) -> Vec<PathBuf> {
         const TARGETS: &[&str] = &[
             "POE1 POB/Builds",
             "POE2 POB/Builds",
@@ -385,7 +385,7 @@ impl PobManager {
         TARGETS.iter().map(PathBuf::from).collect()
     }
 
-    pub async fn restore(&self, reporter: &InstallReporter) -> Result<(), PobError> {
+    pub(crate) async fn restore(&self, reporter: &InstallReporter) -> Result<(), PobError> {
         tracing::info!(phase = "restore", "Starting restore from backup");
         reporter.report(
             InstallPhase::Restoring,
@@ -430,14 +430,14 @@ impl PobManager {
         Ok(())
     }
 
-    pub async fn save_version_info(&self, version: &PobVersion) -> Result<(), PobError> {
+    pub(crate) async fn save_version_info(&self, version: &PobVersion) -> Result<(), PobError> {
         let path = self.pob_version_file_path();
         let data = serde_json::to_string_pretty(version)?;
         tokio::fs::write(&path, data).await?;
         Ok(())
     }
 
-    pub async fn rename(
+    pub(crate) async fn rename(
         &self,
         extracted: &Path,
         install_dir: &Path,
@@ -553,3 +553,243 @@ fn detect_nested_structure(
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Type, Event)]
 pub struct CancelEvent;
+
+// ============================================================================
+// Install Context & Workflow
+// ============================================================================
+
+/// Tracks which stages of installation have been completed for rollback purposes
+#[derive(Debug, Default)]
+struct InstallContext {
+    temp_zip_path: Option<PathBuf>,
+    extract_dir: Option<PathBuf>,
+    install_path: PathBuf,
+    backed_up: bool,
+    swapped: bool,
+}
+
+impl PobManager {
+    /// Main installation workflow - transactional update with rollback support.
+    ///
+    /// Stages: download → extract → backup → swap → restore → save version
+    pub async fn install(
+        &self,
+        file_info: GoogleDriveFileInfo,
+        temp_dir: PathBuf,
+        cancel_token: CancellationToken,
+        reporter: InstallReporter,
+    ) -> Result<(), PobError> {
+        tracing::info!("=== INSTALL START ===");
+
+        let install_path = self.install_path();
+        let extract_dir = install_path.with_extension("new");
+        let mut temp_zip_path = temp_dir.join(&file_info.name).with_extension("part");
+
+        let mut ctx = InstallContext {
+            temp_zip_path: None,
+            extract_dir: Some(extract_dir.clone()),
+            install_path: install_path.clone(),
+            backed_up: false,
+            swapped: false,
+        };
+
+        tracing::info!(phase = "init", path = %install_path.display(), "Install path determined");
+
+        // 1. Download
+        let download_result = self
+            .download_with_progress(
+                &file_info.id,
+                &temp_zip_path,
+                cancel_token.clone(),
+                &reporter,
+            )
+            .await;
+
+        if let Err(e) = download_result {
+            tracing::error!(
+                phase = "download",
+                error = %e,
+                "Failed to download POB file from Google Drive"
+            );
+            tokio::fs::remove_file(&temp_zip_path).await.ok();
+            return Err(e);
+        }
+
+        // Rename .part to .zip
+        let zip_path = temp_zip_path.with_extension("zip");
+        tokio::fs::rename(&temp_zip_path, &zip_path).await?;
+        temp_zip_path = zip_path;
+        ctx.temp_zip_path = Some(temp_zip_path.clone());
+
+        // 2. Extract
+        tracing::info!(
+            phase = "extract",
+            from = %temp_zip_path.display(),
+            to = %extract_dir.display(),
+            "Extracting to .new directory"
+        );
+
+        let extract_result = self
+            .extract_with_progress(
+                &temp_zip_path,
+                &extract_dir,
+                cancel_token.clone(),
+                reporter.clone(),
+            )
+            .await;
+
+        if let Err(e) = extract_result {
+            tracing::info!(operation = "cleanup", path = %temp_zip_path.display(), "Cleaning up temp ZIP file after extract failure");
+            tokio::fs::remove_file(&temp_zip_path).await.ok();
+            return Err(e);
+        }
+
+        tracing::info!(phase = "extract", path = %extract_dir.display(), "Extract completed");
+
+        // 3. Backup existing user data
+        tracing::info!(phase = "backup", "Starting backup phase");
+        self.backup(&reporter).await?;
+        ctx.backed_up = true;
+        tracing::info!(phase = "backup", "Backup completed");
+
+        // 4-6: Atomic operations with rollback on failure
+        let result = self
+            .finish_install(&extract_dir, &install_path, &file_info, &reporter)
+            .await;
+
+        if let Err(e) = result {
+            tracing::error!(phase = "rollback", error = %e, "Installation failed, attempting rollback");
+            self.rollback(&ctx).await;
+            return Err(e);
+        }
+
+        ctx.swapped = true;
+
+        // Success: cleanup
+        self.cleanup_success(&ctx, &temp_zip_path).await;
+
+        tracing::info!("=== INSTALL SUCCESS ===");
+        Ok(())
+    }
+
+    /// Finish installation: swap → restore → save version
+    async fn finish_install(
+        &self,
+        extract_dir: &Path,
+        install_path: &Path,
+        file_info: &GoogleDriveFileInfo,
+        reporter: &InstallReporter,
+    ) -> Result<(), PobError> {
+        // 4. Swap (rename .new to install_path)
+        tracing::info!(
+            phase = "rename",
+            from = %extract_dir.display(),
+            to = %install_path.display(),
+            "Starting rename phase"
+        );
+        self.rename(extract_dir, install_path, reporter).await?;
+        tracing::info!(phase = "rename", "Rename completed");
+
+        // 5. Restore user data
+        tracing::info!(phase = "restore", "Starting restore phase");
+        self.restore(reporter).await?;
+        tracing::info!(phase = "restore", "Restore completed");
+
+        // 6. Save version info
+        tracing::info!(phase = "finalize", "Saving version info");
+        let version = PobVersion::try_from(file_info)?;
+        self.save_version_info(&version).await?;
+        tracing::info!(phase = "finalize", "Version info saved");
+
+        Ok(())
+    }
+
+    /// Rollback on failure - restore from .old if available
+    async fn rollback(&self, ctx: &InstallContext) {
+        let old_path = ctx.install_path.with_extension("old");
+
+        if old_path.exists() {
+            tracing::info!(phase = "rollback", path = %old_path.display(), "Restoring from .old");
+
+            // Remove partial installation
+            if ctx.install_path.exists() {
+                tracing::warn!(phase = "rollback", "Removing partial installation");
+                tokio::fs::remove_dir_all(&ctx.install_path).await.ok();
+            }
+
+            // Restore from .old
+            if let Err(e) = tokio::fs::rename(&old_path, &ctx.install_path).await {
+                tracing::error!(
+                    phase = "rollback",
+                    error = %e,
+                    old = %old_path.display(),
+                    target = %ctx.install_path.display(),
+                    "CRITICAL: Failed to rollback from .old, manual intervention required"
+                );
+            } else {
+                tracing::info!(phase = "rollback", "Successfully restored from .old");
+            }
+        } else {
+            tracing::warn!(phase = "rollback", "No .old directory to rollback from");
+        }
+
+        // Cleanup: remove .new if exists
+        if let Some(ref extract_dir) = ctx.extract_dir
+            && extract_dir.exists()
+        {
+            tracing::info!(operation = "cleanup", path = %extract_dir.display(), "Cleaning up .new directory");
+            tokio::fs::remove_dir_all(extract_dir).await.ok();
+        }
+    }
+
+    /// Cleanup after successful installation
+    async fn cleanup_success(&self, ctx: &InstallContext, temp_zip_path: &Path) {
+        tracing::info!(
+            operation = "cleanup",
+            "Installation successful, cleaning up temporary directories"
+        );
+
+        // Remove temp ZIP
+        if temp_zip_path.exists() {
+            tracing::debug!(operation = "cleanup", path = %temp_zip_path.display(), "Removing temp ZIP");
+            tokio::fs::remove_file(temp_zip_path).await.ok();
+        }
+
+        // Remove .old
+        let old_path = ctx.install_path.with_extension("old");
+        if old_path.exists() {
+            tracing::debug!(operation = "cleanup", path = %old_path.display(), "Removing .old");
+            tokio::fs::remove_dir_all(&old_path).await.ok();
+        }
+
+        // Remove .new (should not exist at this point, but just in case)
+        if let Some(ref extract_dir) = ctx.extract_dir
+            && extract_dir.exists()
+        {
+            tracing::debug!(operation = "cleanup", path = %extract_dir.display(), "Removing .new");
+            tokio::fs::remove_dir_all(extract_dir).await.ok();
+        }
+    }
+
+    /// Uninstall PoB - removes the installation directory
+    pub async fn uninstall(&self, reporter: &InstallReporter) -> Result<(), PobError> {
+        let path = self.install_path();
+
+        if path.exists() {
+            tracing::info!(phase = "uninstall", path = %path.display(), "Starting uninstall");
+            reporter.report(
+                InstallPhase::Uninstalling,
+                InstallStatus::Started { total_size: None },
+            );
+
+            tokio::fs::remove_dir_all(&path).await?;
+
+            reporter.report(InstallPhase::Uninstalling, InstallStatus::Completed);
+            tracing::info!(phase = "uninstall", "Uninstall completed");
+        } else {
+            tracing::debug!(phase = "uninstall", "No installation found, skipping");
+        }
+
+        Ok(())
+    }
+}
