@@ -44,7 +44,7 @@
 				<Sidebar.Menu>
 					{#each menuItems as item (item.title)}
 						<Sidebar.MenuItem>
-							<Sidebar.MenuButton isActive={$page.url.pathname === item.url} tooltipContent={item.title}>
+							<Sidebar.MenuButton isActive={item.url === "/" ? $page.url.pathname === "/" : $page.url.pathname.startsWith(item.url)} tooltipContent={item.title}>
 								{#snippet child({ props })}
 									<a href={item.url} {...props}>
 										<item.icon />

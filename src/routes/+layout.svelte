@@ -10,7 +10,7 @@
 <Sidebar.Provider>
 	<AppSidebar />
 	<Sidebar.Inset>
-		<main class="flex-1 overflow-auto p-6">
+		<main class="flex-1 overflow-auto">
 			{@render children?.()}
 		</main>
 	</Sidebar.Inset>
