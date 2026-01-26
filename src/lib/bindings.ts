@@ -21,9 +21,9 @@ async installedPobInfo() : Promise<Result<PobVersion | null, ErrorKind>> {
     else return { status: "error", error: e  as any };
 }
 },
-async installPob(fileData: GoogleDriveFileInfo | null) : Promise<Result<boolean, ErrorKind>> {
+async installPob(fileData: GoogleDriveFileInfo | null, downloadMode: DownloadMode) : Promise<Result<boolean, ErrorKind>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("install_pob", { fileData }) };
+    return { status: "ok", data: await TAURI_INVOKE("install_pob", { fileData, downloadMode }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -84,6 +84,22 @@ installProgress: "install-progress"
 /** user-defined types **/
 
 export type CancelEvent = null
+/**
+ * Download mode selection
+ */
+export type DownloadMode = 
+/**
+ * Automatically choose based on file size and server support
+ */
+"auto" | 
+/**
+ * Force parallel chunk download (faster for high-speed networks)
+ */
+"parallel" | 
+/**
+ * Force single-stream download (more stable)
+ */
+"single"
 /**
  * IPC error type for frontend consumption.
  * Designed for UI-actionable categories, not implementation details.

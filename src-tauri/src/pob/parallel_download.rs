@@ -13,6 +13,8 @@ use std::{
 };
 
 use futures_util::{stream::FuturesUnordered, StreamExt};
+use serde::{Deserialize, Serialize};
+use specta::Type;
 use tokio::{
     fs::File,
     io::{AsyncSeekExt, AsyncWriteExt, BufWriter},
@@ -26,6 +28,19 @@ use crate::pob::{
     progress::{InstallPhase, InstallReporter, InstallStatus},
 };
 
+/// Download mode selection
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, Type, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum DownloadMode {
+    /// Automatically choose based on file size and server support
+    #[default]
+    Auto,
+    /// Force parallel chunk download (faster for high-speed networks)
+    Parallel,
+    /// Force single-stream download (more stable)
+    Single,
+}
+
 /// Configuration for parallel downloads
 #[derive(Debug, Clone)]
 pub struct ParallelDownloadConfig {
@@ -35,14 +50,17 @@ pub struct ParallelDownloadConfig {
     pub min_parallel_size: u64,
     /// Target chunk size (bytes)
     pub chunk_size: u64,
+    /// Download mode override
+    pub mode: DownloadMode,
 }
 
 impl Default for ParallelDownloadConfig {
     fn default() -> Self {
         Self {
             concurrency: 4,
-            min_parallel_size: 10 * 1024 * 1024, // 10MB
-            chunk_size: 8 * 1024 * 1024,         // 8MB chunks
+            min_parallel_size: 50 * 1024 * 1024,  // 50MB minimum (smaller files use single-stream)
+            chunk_size: 128 * 1024 * 1024,        // 128MB chunks (reduce HTTP connection overhead)
+            mode: DownloadMode::Auto,
         }
     }
 }
@@ -114,32 +132,87 @@ impl<'a> ParallelDownloader<'a> {
         cancel_token: CancellationToken,
         reporter: &InstallReporter,
     ) -> Result<(), PobError> {
-        // Get file info to determine download strategy
-        let file_info = self.client.get_file_download_info(file_id).await?;
+        // Determine download strategy based on mode
+        let use_parallel = match self.config.mode {
+            DownloadMode::Single => {
+                tracing::info!(
+                    phase = "download",
+                    mode = "single",
+                    "Using single-stream download (user preference)"
+                );
+                false
+            }
+            DownloadMode::Parallel => {
+                // Get file info to check if Range is supported
+                let file_info = self.client.get_file_download_info(file_id).await?;
+                if !file_info.accepts_ranges {
+                    tracing::warn!(
+                        phase = "download",
+                        mode = "parallel",
+                        "Parallel download requested but server doesn't support Range, falling back to single-stream"
+                    );
+                    return self
+                        .download_single_stream(file_id, file_info.content_length, dst, cancel_token, reporter)
+                        .await;
+                }
+                tracing::info!(
+                    phase = "download",
+                    mode = "parallel",
+                    content_length = %file_info.content_length,
+                    concurrency = %self.config.concurrency,
+                    chunk_size = %self.config.chunk_size,
+                    "Using parallel chunk download (user preference)"
+                );
+                return self
+                    .download_parallel(file_id, &file_info, dst, cancel_token, reporter)
+                    .await;
+            }
+            DownloadMode::Auto => {
+                // Get file info to determine download strategy
+                let file_info = self.client.get_file_download_info(file_id).await?;
 
-        let should_parallel = file_info.accepts_ranges
-            && file_info.content_length >= self.config.min_parallel_size;
+                let should_parallel = file_info.accepts_ranges
+                    && file_info.content_length >= self.config.min_parallel_size;
 
-        if should_parallel {
-            tracing::info!(
-                phase = "download",
-                content_length = %file_info.content_length,
-                concurrency = %self.config.concurrency,
-                chunk_size = %self.config.chunk_size,
-                "Using parallel chunk download"
-            );
-            self.download_parallel(file_id, &file_info, dst, cancel_token, reporter)
-                .await
-        } else {
-            tracing::info!(
-                phase = "download",
-                content_length = %file_info.content_length,
-                accepts_ranges = %file_info.accepts_ranges,
-                "Using single-stream download (parallel not supported or file too small)"
-            );
-            self.download_single_stream(file_id, file_info.content_length, dst, cancel_token, reporter)
-                .await
+                if should_parallel {
+                    tracing::info!(
+                        phase = "download",
+                        mode = "auto",
+                        content_length = %file_info.content_length,
+                        concurrency = %self.config.concurrency,
+                        chunk_size = %self.config.chunk_size,
+                        "Using parallel chunk download (auto-detected)"
+                    );
+                    return self
+                        .download_parallel(file_id, &file_info, dst, cancel_token, reporter)
+                        .await;
+                } else {
+                    tracing::info!(
+                        phase = "download",
+                        mode = "auto",
+                        content_length = %file_info.content_length,
+                        accepts_ranges = %file_info.accepts_ranges,
+                        "Using single-stream download (auto: parallel not supported or file too small)"
+                    );
+                    return self
+                        .download_single_stream(file_id, file_info.content_length, dst, cancel_token, reporter)
+                        .await;
+                }
+            }
+        };
+
+        // Single mode fallback (no file info fetch needed for basic single stream)
+        if !use_parallel {
+            let res = self.client.get_file(file_id).await?;
+            let total_size = res.content_length().unwrap_or(0);
+            // Close response and use single stream method
+            drop(res);
+            return self
+                .download_single_stream(file_id, total_size, dst, cancel_token, reporter)
+                .await;
         }
+
+        Ok(())
     }
 
     /// Download using parallel chunks
@@ -354,6 +427,8 @@ async fn download_chunk(
     progress: &ProgressTracker,
     cancel_token: CancellationToken,
 ) -> Result<(), PobError> {
+    let chunk_start_time = Instant::now();
+
     tracing::debug!(
         phase = "download",
         chunk_index = %chunk.index,
@@ -362,12 +437,24 @@ async fn download_chunk(
         "Starting chunk download"
     );
 
+    let http_start = Instant::now();
     let res = client.get_file_range(file_id, chunk.start, chunk.end).await?;
+    let http_elapsed = http_start.elapsed();
+
+    tracing::debug!(
+        phase = "download",
+        chunk_index = %chunk.index,
+        http_connect_ms = %http_elapsed.as_millis(),
+        "HTTP Range request established"
+    );
+
     let mut stream = res.bytes_stream();
 
-    let mut offset = chunk.start;
-    let mut buffer = Vec::with_capacity(64 * 1024);
+    // Buffer the ENTIRE chunk in memory, then write once
+    let chunk_size = (chunk.end - chunk.start + 1) as usize;
+    let mut buffer = Vec::with_capacity(chunk_size);
 
+    let stream_start = Instant::now();
     while let Some(result) = stream.next().await {
         if cancel_token.is_cancelled() {
             return Err(PobError::Cancelled);
@@ -376,28 +463,28 @@ async fn download_chunk(
         let bytes = result.map_err(|e| PobError::DownloadFailed(e.to_string()))?;
         buffer.extend_from_slice(&bytes);
 
-        // Write to file when buffer is large enough
-        if buffer.len() >= 64 * 1024 {
-            let mut file = file.lock().await;
-            file.seek(std::io::SeekFrom::Start(offset)).await?;
-            file.write_all(&buffer).await?;
-            offset += buffer.len() as u64;
-            progress.add_progress(buffer.len() as u64);
-            buffer.clear();
-        }
+        // Report progress during streaming (no lock needed)
+        progress.add_progress(bytes.len() as u64);
     }
+    let stream_elapsed = stream_start.elapsed();
 
-    // Write remaining bytes
-    if !buffer.is_empty() {
+    // Single write at the end
+    let write_start = Instant::now();
+    {
         let mut file = file.lock().await;
-        file.seek(std::io::SeekFrom::Start(offset)).await?;
+        file.seek(std::io::SeekFrom::Start(chunk.start)).await?;
         file.write_all(&buffer).await?;
-        progress.add_progress(buffer.len() as u64);
     }
+    let write_elapsed = write_start.elapsed();
 
-    tracing::debug!(
+    tracing::info!(
         phase = "download",
         chunk_index = %chunk.index,
+        chunk_size_mb = format!("{:.2}", chunk_size as f64 / 1024.0 / 1024.0),
+        http_connect_ms = %http_elapsed.as_millis(),
+        stream_ms = %stream_elapsed.as_millis(),
+        write_ms = %write_elapsed.as_millis(),
+        total_ms = %chunk_start_time.elapsed().as_millis(),
         "Chunk download completed"
     );
 

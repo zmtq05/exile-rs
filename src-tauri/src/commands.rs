@@ -12,6 +12,7 @@ use crate::{
     pob::{
         google_drive::GoogleDriveFileInfo,
         manager::{CancelEvent, PobManager},
+        parallel_download::DownloadMode,
         progress::{InstallReporter, TauriProgressSink},
         version::PobVersion,
     },
@@ -56,6 +57,7 @@ pub async fn uninstall_pob(manager: State<'_, PobManager>, app: AppHandle) -> Re
 #[specta::specta]
 pub async fn install_pob(
     file_data: Option<GoogleDriveFileInfo>,
+    download_mode: DownloadMode,
     manager: State<'_, PobManager>,
     installing: State<'_, crate::pob::Installing>,
     app: AppHandle,
@@ -70,13 +72,14 @@ pub async fn install_pob(
         ));
     }
 
-    let result = install_pob_internal(file_data, manager, app).await;
+    let result = install_pob_internal(file_data, download_mode, manager, app).await;
     installing.store(false, Ordering::Release);
     result
 }
 
 async fn install_pob_internal(
     file_data: Option<GoogleDriveFileInfo>,
+    download_mode: DownloadMode,
     manager: State<'_, PobManager>,
     app: AppHandle,
 ) -> Result<bool> {
@@ -102,7 +105,7 @@ async fn install_pob_internal(
 
     // Delegate to manager
     manager
-        .install(file_info, temp_dir, cancel_token, reporter)
+        .install(file_info, temp_dir, download_mode, cancel_token, reporter)
         .await?;
 
     Ok(true)
