@@ -65,7 +65,7 @@ pub async fn install_pob(
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
         .is_err()
     {
-        return Err(ErrorKind::PobError(
+        return Err(ErrorKind::Conflict(
             "이미 다른 설치 작업이 진행 중입니다.".into(),
         ));
     }
@@ -119,7 +119,7 @@ pub async fn cancel_install_pob(app: AppHandle) {
 pub async fn execute_pob(manager: State<'_, PobManager>) -> Result<()> {
     let exe_path = manager.exe_path();
     if !exe_path.exists() {
-        return Err(ErrorKind::PobError(format!(
+        return Err(ErrorKind::NotFound(format!(
             "POB 실행 파일을 찾을 수 없습니다: {}",
             exe_path.display()
         )));
@@ -131,7 +131,7 @@ pub async fn execute_pob(manager: State<'_, PobManager>) -> Result<()> {
         .stderr(Stdio::null())
         .stdout(Stdio::null())
         .spawn()
-        .map_err(|e| ErrorKind::PobError(format!("POB 실행에 실패했습니다: {}", e)))?;
+        .map_err(|e| ErrorKind::Io(format!("POB 실행에 실패했습니다: {}", e)))?;
 
     Ok(())
 }

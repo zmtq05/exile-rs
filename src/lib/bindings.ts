@@ -76,7 +76,35 @@ installProgress: "install-progress"
 /** user-defined types **/
 
 export type CancelEvent = null
-export type ErrorKind = { kind: "pobError"; message: string } | { kind: "tauriError"; message: string } | { kind: "io"; message: string }
+/**
+ * IPC error type for frontend consumption.
+ * Designed for UI-actionable categories, not implementation details.
+ */
+export type ErrorKind = 
+/**
+ * User cancelled the operation (not an error, no toast needed)
+ */
+{ kind: "cancelled" } | 
+/**
+ * Network/connectivity issues (retry may help)
+ */
+{ kind: "network"; message: string } | 
+/**
+ * Filesystem/permission issues
+ */
+{ kind: "io"; message: string } | 
+/**
+ * Resource not found (e.g., file not on Google Drive)
+ */
+{ kind: "notFound"; message: string } | 
+/**
+ * Conflict state (e.g., PoB is running)
+ */
+{ kind: "conflict"; message: string } | 
+/**
+ * Other domain errors
+ */
+{ kind: "domain"; message: string }
 export type GoogleDriveFileInfo = { id: string; name: string; isFolder: boolean }
 export type InstallPhase = "downloading" | "extracting" | "backingUp" | "moving" | "restoring" | "finalizing" | "uninstalling"
 export type InstallProgress = ({ status: "started"; total_size?: number | null } | { status: "inProgress"; percent: number } | { status: "completed" } | { status: "failed"; reason: string } | { status: "cancelled" }) & { taskId: string; phase: InstallPhase }
