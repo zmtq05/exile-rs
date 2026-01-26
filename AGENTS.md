@@ -1,143 +1,194 @@
 # AGENTS.md - Exile-rs Development Guide
 
 ## Project Overview
-Tauri v2 desktop application with SvelteKit 5 frontend and Rust backend.
-- **Frontend**: TypeScript, Svelte 5 (Runes), TailwindCSS, shadcn-svelte
-- **Backend**: Rust with tauri-specta for type-safe TypeScript bindings
+Tauri v2 desktop app for managing Path of Exile tools (PoB manager, timers, etc.)
+- **Frontend**: TypeScript, Svelte 5 (Runes), TailwindCSS 4, shadcn-svelte
+- **Backend**: Rust (stable, edition 2024) with tauri-specta for type-safe bindings
 - **Architecture**: SPA mode using @sveltejs/adapter-static
 
-## Build Commands
+## Build & Development
 
-### Development
 ```bash
-pnpm run dev              # Start SvelteKit dev server only
-pnpm tauri dev            # Start full Tauri app with hot reload
+# Development
+pnpm tauri dev              # Full app with hot reload
+
+# Frontend only
+pnpm run dev                # SvelteKit dev server
+pnpm run check              # svelte-check (type check)
+
+# Rust (from src-tauri/)
+cargo build                 # Debug build
+cargo clippy                # Lint (MUST pass before commit)
+cargo fmt                   # Format (MUST run before commit)
+cargo test                  # Run all tests
+cargo test <name>           # Single test: cargo test test_parse_version
+cargo test <name> -- --exact  # Exact match
 ```
 
-### Production Build
+## CI/CD (GitHub Actions)
+
+### CI (`.github/workflows/ci.yml`)
+Triggers on PR/push to main:
+- `cargo fmt --check` + `cargo clippy` (Rust lint)
+- `pnpm run check` (svelte-check)
+- `pnpm tauri build` (full build verification)
+
+### Release (`.github/workflows/release.yml`)
+Triggers on `v*` tag push:
+1. **Version check**: Tag must match `Cargo.toml`, `package.json`, `tauri.conf.json`
+2. Build Windows installer (.msi, .exe)
+3. Create draft GitHub release
+
 ```bash
-pnpm run build            # Build frontend assets
-pnpm tauri build          # Build Tauri application bundle
+# Release workflow
+# 1. Update versions in all 3 files
+# 2. Commit and tag
+git tag v0.2.0 && git push origin v0.2.0
 ```
-
-### Type Checking
-```bash
-pnpm run check            # Run svelte-check once
-pnpm run check:watch      # Run svelte-check in watch mode
-```
-
-### Rust (run from src-tauri/)
-```bash
-cargo build               # Build Rust backend
-cargo build --release     # Build optimized release
-cargo clippy              # Lint Rust code
-cargo clippy --fix        # Auto-fix Rust lints
-cargo fmt                 # Format Rust code
-cargo test                # Run Rust tests (none exist yet)
-cargo test <test_name>    # Run single test by name
-```
-
-## Testing
-
-**Current State**: No tests configured yet
-- **Rust**: Use `#[cfg(test)]` modules or `/tests` directory
-- **Frontend**: Consider Vitest or Playwright
-
-**Run Single Test** (when exists): `cargo test <test_name>` or `cargo test <test_name> -- --exact`
-
-## MCP Tools & Subagents
-
-### Svelte MCP (@sveltejs/opencode)
-- `svelte_list-sections`, `svelte_get-documentation` - Browse Svelte 5/SvelteKit docs
-- `svelte_svelte-autofixer` - Validate Svelte code (USE before sending to user)
-- `svelte_playground-link` - Generate playground links
-- **Subagent**: `svelte-file-editor` - MUST USE when creating/editing .svelte files
-
-### shadcn-svelte MCP
-- `shadcn-svelte_shadcnSvelteSearchTool`, `shadcn-svelte_shadcnSvelteGetTool` - Search/get components
-- `shadcn-svelte_shadcnSvelteIconsTool`, `shadcn-svelte_shadcnSvelteListTool` - Icons/list
-- `shadcn-svelte_bitsUiGetTool` - Bits UI details (underlying library)
 
 ## Code Style
 
 ### TypeScript/Svelte
 
-#### Imports
-- Use `@/*` alias for lib imports: `import { commands } from "@/bindings"`
-- Auto-generated bindings are at `@/bindings` (DO NOT manually edit)
-- Prefer named imports over default imports
-- Group imports: external packages → internal modules → types
+**Imports** (order: external → internal → types):
+```typescript
+import { onMount } from "svelte";
+import { commands, type ErrorKind } from "@/bindings";
+import { Button } from "@/components/ui/button";
+```
 
-#### Formatting
-- TypeScript strict mode enabled (`strict: true`)
-- Use Svelte 5 runes: `$state`, `$derived`, `$effect`
-- Prefer `const` over `let` unless reassignment needed
-- Use `type` for type definitions, `interface` for extensible contracts
+**Svelte 5 Runes**:
+```svelte
+<script lang="ts">
+  let value = $state("");
+  let computed = $derived(value.toUpperCase());
+  let isValid = $derived(value.length > 0);
+</script>
+```
 
-#### Component Pattern
-- Use Svelte 5 runes: `let value = $state("")`, `let computed = $derived(...)`
-- TypeScript: `<script lang="ts">` with async/await for Tauri commands
-- **CRITICAL**: Use `svelte-file-editor` subagent or `svelte_svelte-autofixer` before sending code
+**Error Handling** (commands return `{ status: "ok" | "error", data?, error? }`):
+```typescript
+const result = await commands.installPob(fileData);
+if (result.status === "error") {
+  if (result.error.kind === "cancelled") return; // Silent ignore
+  error = { kind: result.error.kind, message: result.error.message };
+}
+```
 
-#### UI Components (shadcn-svelte)
-- **ALWAYS use** shadcn-svelte from `@/components/ui/*` - use MCP tools to search first
-- Install: `pnpm dlx shadcn-svelte@latest add <component-name>`
+**shadcn-svelte**:
+- ALWAYS use from `@/components/ui/*` - search with MCP tools first
+- Install: `pnpm dlx shadcn-svelte@latest add <component>`
 - Use `cn()` from `@/utils` for className merging
-- **WARNING**: This is Svelte, NOT React - don't use `asChild` or React patterns
-- DO NOT create custom Button, Input, Dialog when shadcn equivalent exists
+- **WARNING**: Svelte, NOT React - no `asChild` prop
 
 ### Rust
 
-- Standard conventions: `cargo fmt`, `cargo clippy` before commits
-- **Tauri Commands**: Use `#[tauri::command]` + `#[specta::specta]` (required for type generation)
-- **Registration**: Add to `collect_commands![]` in `lib.rs` specta_builder
-- Bindings auto-generate to `src/lib/bindings.ts` in debug mode
+**Tauri Commands** (MUST have both attributes):
+```rust
+#[tauri::command]
+#[specta::specta]
+pub async fn my_command(manager: State<'_, PobManager>) -> Result<T, ErrorKind> {
+    Ok(manager.do_something().await?)
+}
+```
 
-### Naming & Error Handling
+**Error Types** (two-layer system):
+```rust
+// Internal domain errors (pob/error.rs) - use thiserror
+#[derive(Debug, thiserror::Error)]
+pub enum PobError {
+    #[error("User cancelled")]
+    Cancelled,
+    #[error("Network error: {0}")]
+    Network(#[from] reqwest::Error),
+}
 
-**Naming**: Rust (snake_case/PascalCase), TypeScript (camelCase/PascalCase), Files (kebab-case .svelte)
+// IPC errors (errors.rs) - user-facing categories
+#[derive(Serialize, Type)]
+#[serde(tag = "kind", content = "message")]
+pub enum ErrorKind {
+    Cancelled,           // No message, UI ignores
+    Network(String),     // Retry may help
+    Io(String),          // Filesystem issues
+    NotFound(String),    // Resource missing
+    Conflict(String),    // e.g., PoB is running
+    Domain(String),      // Other errors
+}
+```
 
-**Errors**: 
-- TypeScript: `try/catch` for Tauri commands, explicit error types
-- Rust: `Result<T, E>` with `?` operator, custom error types over `String`
+**Tracing** (structured logging):
+```rust
+tracing::info!(
+    phase = "download",
+    operation = "start",
+    file = %file_name,
+    "Starting download"
+);
+```
+
+**Registration**: Add commands to `collect_commands![]` in `lib.rs`
 
 ## Project Structure
 
 ```
 exile-rs/
-├── src/                          # Frontend source
-│   ├── routes/                   # SvelteKit routes
-│   │   ├── +page.svelte         # Main page
-│   │   └── +layout.svelte       # Root layout
-│   ├── lib/                      # Shared frontend code
+├── src/                          # Frontend
+│   ├── routes/                   # SvelteKit pages
+│   ├── lib/
 │   │   ├── bindings.ts          # Auto-generated (DO NOT EDIT)
-│   │   ├── utils.ts             # Utility functions
-│   │   ├── components/ui/       # shadcn-svelte components
-│   │   └── hooks/               # Custom Svelte hooks
-│   ├── app.css                  # Global styles (Tailwind)
-│   └── app.html                 # HTML template
-├── src-tauri/                    # Rust backend
+│   │   ├── components/ui/       # shadcn-svelte
+│   │   └── utils.ts             # cn() helper
+│   ├── app.css                  # Tailwind + theme
+│   └── app.html                 # Root HTML (dark mode enabled)
+├── src-tauri/                    # Backend
 │   ├── src/
-│   │   ├── lib.rs               # Main library (commands, setup)
-│   │   └── main.rs              # Binary entry point
-│   ├── Cargo.toml               # Rust dependencies
-│   └── tauri.conf.json          # Tauri configuration
-├── package.json                  # Frontend dependencies & scripts
-├── svelte.config.js             # SvelteKit configuration
-├── vite.config.js               # Vite bundler config
-└── tsconfig.json                # TypeScript configuration
+│   │   ├── lib.rs               # App setup, command registration
+│   │   ├── commands.rs          # Tauri IPC commands (thin adapter)
+│   │   ├── errors.rs            # ErrorKind for frontend
+│   │   └── pob/                 # PoB domain module
+│   │       ├── manager.rs       # PobManager (install/uninstall logic)
+│   │       ├── error.rs         # PobError (domain errors)
+│   │       ├── progress.rs      # ProgressSink trait, InstallReporter
+│   │       └── version.rs       # Version parsing
+│   └── tauri.conf.json          # Tauri config
+├── .github/workflows/           # CI/CD
+│   ├── ci.yml                   # Lint + build on PR
+│   └── release.yml              # Release on v* tag
+└── AGENTS.md                    # This file
 ```
+
+## MCP Tools for Agents
+
+**Svelte** (`@sveltejs/opencode`):
+- `svelte_svelte-autofixer` - MUST validate code before sending to user
+- `svelte-file-editor` subagent - MUST USE for .svelte files
+
+**shadcn-svelte**:
+- `shadcn-svelte_shadcnSvelteGetTool` - Get component docs
+- `shadcn-svelte_shadcnSvelteSearchTool` - Search components
 
 ## Important Rules
 
-**DO NOT**: Edit `src/lib/bindings.ts` (auto-generated), use `as any`, commit without `cargo fmt`/`clippy`
+**DO NOT**:
+- Edit `src/lib/bindings.ts` (auto-generated by specta)
+- Use `as any`, `@ts-ignore`, `@ts-expect-error`
+- Commit without `cargo fmt` + `cargo clippy`
+- Create custom UI components when shadcn equivalent exists
 
-**DO**: Run `pnpm tauri dev` after Rust changes, use `@/*` alias, export TS types from Rust via specta
+**DO**:
+- Run `pnpm tauri dev` after Rust changes (regenerates bindings)
+- Use `@/*` alias for imports
+- Follow two-layer error pattern (PobError → ErrorKind)
+- Add structured fields to tracing logs
 
 ## Adding Features
 
-**Tauri Command**: Define with `#[tauri::command]` + `#[specta::specta]` in `lib.rs`, add to `collect_commands![]`, run `pnpm tauri dev`
+**Tauri Command**:
+1. Define in `commands.rs` with `#[tauri::command]` + `#[specta::specta]`
+2. Add to `collect_commands![]` in `lib.rs`
+3. Run `pnpm tauri dev` to regenerate bindings
 
-**UI Component**: Use shadcn-svelte MCP to search → install via `pnpm dlx shadcn-svelte@latest add <name>` → if custom needed, use `svelte-file-editor` subagent
-
-**Route**: Create `+page.svelte` in `src/routes/<name>/`, optional `+page.ts` for load functions
+**UI Component**:
+1. Search shadcn-svelte MCP first
+2. Install: `pnpm dlx shadcn-svelte@latest add <name>`
+3. If custom needed, use `svelte-file-editor` subagent
