@@ -1,4 +1,8 @@
-use std::{num::NonZeroU32, sync::Arc};
+use std::{
+    num::NonZeroU32,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
 
 use serde::Serialize;
 use specta::Type;
@@ -40,19 +44,38 @@ impl InstallReporter {
     }
 }
 
-/// Tauri implementation of ProgressSink.
+/// Tauri implementation of ProgressSink with throttling.
+/// Throttles InProgress events to prevent IPC spam during fast operations.
 pub struct TauriProgressSink {
     app: tauri::AppHandle,
+    last_emit: Mutex<Instant>,
+    throttle_duration: Duration,
 }
 
 impl TauriProgressSink {
     pub fn new(app: tauri::AppHandle) -> Self {
-        Self { app }
+        Self {
+            app,
+            // Initialize in the past to allow first emit immediately
+            last_emit: Mutex::new(Instant::now() - Duration::from_millis(200)),
+            throttle_duration: Duration::from_millis(100),
+        }
     }
 }
 
 impl ProgressSink for TauriProgressSink {
     fn emit(&self, progress: InstallProgress) {
+        // Always emit non-InProgress events (Started, Completed, Failed, Cancelled)
+        let should_throttle = matches!(progress.status, InstallStatus::InProgress { .. });
+
+        if should_throttle {
+            let mut last = self.last_emit.lock().unwrap();
+            if last.elapsed() < self.throttle_duration {
+                return; // Skip this emit
+            }
+            *last = Instant::now();
+        }
+
         if let Err(e) = progress.emit(&self.app) {
             tracing::warn!(
                 task_id = %progress.task_id,
