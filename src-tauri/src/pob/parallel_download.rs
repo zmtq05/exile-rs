@@ -300,13 +300,19 @@ impl<'a> ParallelDownloader<'a> {
         }
 
         if let Some(e) = any_error {
-            tracing::error!(phase = "download", error = %e, "Parallel download failed");
-            reporter.report(
-                InstallPhase::Downloading,
-                InstallStatus::Failed {
-                    reason: e.to_string(),
-                },
-            );
+            // Cancelled는 별도 상태로 emit
+            if matches!(e, PobError::Cancelled) {
+                tracing::info!(phase = "download", "Parallel download cancelled by user");
+                reporter.report(InstallPhase::Downloading, InstallStatus::Cancelled);
+            } else {
+                tracing::error!(phase = "download", error = %e, "Parallel download failed");
+                reporter.report(
+                    InstallPhase::Downloading,
+                    InstallStatus::Failed {
+                        reason: e.to_string(),
+                    },
+                );
+            }
             tokio::fs::remove_file(dst).await.ok();
             return Err(e);
         }
