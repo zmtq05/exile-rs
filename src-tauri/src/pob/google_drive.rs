@@ -1,4 +1,4 @@
-use reqwest::Response;
+use reqwest::{header, Response};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
@@ -10,6 +10,17 @@ pub struct GoogleDriveFileInfo {
     pub id: String,
     pub name: String,
     pub is_folder: bool,
+}
+
+/// Information about a file for download planning
+#[derive(Debug, Clone)]
+pub struct FileDownloadInfo {
+    /// Total file size in bytes
+    pub content_length: u64,
+    /// Whether the server supports Range requests
+    pub accepts_ranges: bool,
+    /// The actual download URL (after redirects)
+    pub download_url: String,
 }
 
 pub struct GoogleDriveClient {
@@ -51,6 +62,95 @@ impl GoogleDriveClient {
             file_id
         );
         let res = self.inner.get(url).send().await?.error_for_status()?;
+
+        Ok(res)
+    }
+
+    /// Get file download info (size, Range support) via HEAD request
+    /// Google Drive redirects, so we follow redirects and check the final response
+    pub async fn get_file_download_info(
+        &self,
+        file_id: &str,
+    ) -> Result<FileDownloadInfo, PobError> {
+        let url = format!(
+            "https://drive.usercontent.google.com/download?confirm=t&id={}",
+            file_id
+        );
+
+        // First do a GET with Range header to check if Range is supported
+        // HEAD requests don't always work with Google Drive
+        let res = self
+            .inner
+            .get(&url)
+            .header(header::RANGE, "bytes=0-0")
+            .send()
+            .await?
+            .error_for_status()?;
+
+        let status = res.status();
+        let headers = res.headers().clone();
+        let final_url = res.url().to_string();
+
+        // Check if server supports Range requests
+        // 206 Partial Content means Range is supported
+        let accepts_ranges = status == reqwest::StatusCode::PARTIAL_CONTENT
+            || headers
+                .get(header::ACCEPT_RANGES)
+                .and_then(|v| v.to_str().ok())
+                .is_some_and(|v| v != "none");
+
+        // Get content length from Content-Range header (for 206) or Content-Length
+        let content_length = if status == reqwest::StatusCode::PARTIAL_CONTENT {
+            // Content-Range: bytes 0-0/12345678
+            headers
+                .get(header::CONTENT_RANGE)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.split('/').next_back())
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(0)
+        } else {
+            headers
+                .get(header::CONTENT_LENGTH)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(0)
+        };
+
+        tracing::debug!(
+            file_id = %file_id,
+            content_length = %content_length,
+            accepts_ranges = %accepts_ranges,
+            status = %status,
+            "File download info retrieved"
+        );
+
+        Ok(FileDownloadInfo {
+            content_length,
+            accepts_ranges,
+            download_url: final_url,
+        })
+    }
+
+    /// Download a specific byte range of a file
+    pub async fn get_file_range(
+        &self,
+        file_id: &str,
+        start: u64,
+        end: u64,
+    ) -> Result<Response, PobError> {
+        let url = format!(
+            "https://drive.usercontent.google.com/download?confirm=t&id={}",
+            file_id
+        );
+
+        let range_header = format!("bytes={}-{}", start, end);
+        let res = self
+            .inner
+            .get(url)
+            .header(header::RANGE, range_header)
+            .send()
+            .await?
+            .error_for_status()?;
 
         Ok(res)
     }

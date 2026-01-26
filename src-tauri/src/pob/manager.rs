@@ -5,21 +5,17 @@ use std::{
     time::Instant,
 };
 
-use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri_specta::Event;
-use tokio::{
-    fs,
-    io::{AsyncWriteExt, BufWriter},
-    sync::Mutex,
-};
+use tokio::{fs, sync::Mutex};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
     pob::{
         error::PobError,
         google_drive::{GoogleDriveClient, GoogleDriveFileInfo},
+        parallel_download::{ParallelDownloadConfig, ParallelDownloader},
         progress::{InstallPhase, InstallReporter, InstallStatus},
         version::PobVersion,
     },
@@ -105,83 +101,11 @@ impl PobManager {
         cancel_token: CancellationToken,
         reporter: &InstallReporter,
     ) -> Result<(), PobError> {
-        let res = self.client.get_file(file_id).await?;
-
-        let total_size = res.content_length().unwrap_or_else(|| {
-            tracing::warn!(phase = "download", "Failed to get content length");
-            0
-        });
-
-        let f = tokio::fs::File::create(&dst).await?;
-
-        if total_size > 0
-            && let Err(e) = f.set_len(total_size).await
-        {
-            tracing::warn!(
-                phase = "download",
-                path = %dst.as_ref().display(),
-                error = %e,
-                "Failed to preallocate file size"
-            );
-        }
-
-        reporter.report(
-            InstallPhase::Downloading,
-            InstallStatus::Started {
-                total_size: NonZeroU32::new(total_size as u32),
-            },
-        );
-
-        let start = Instant::now();
-        let mut stream = res.bytes_stream();
-        let mut writer = BufWriter::with_capacity(64 * 1024, f);
-
-        let mut downloaded: u32 = 0;
-        let mut last_report = start;
-
-        loop {
-            tokio::select! {
-                _ = cancel_token.cancelled() => {
-                    tracing::info!(phase = "download", "Download cancelled");
-                    reporter.report(InstallPhase::Downloading, InstallStatus::Cancelled);
-                    _ = tokio::fs::remove_file(&dst).await;
-                    return Err(PobError::Cancelled);
-                }
-                chunk = stream.next() => {
-                    match chunk {
-                        Some(Ok(bytes)) => {
-                            writer.write_all(&bytes).await?;
-
-                            downloaded += bytes.len() as u32;
-
-                            if last_report.elapsed().as_millis() < 100 {
-                                continue;
-                            }
-                            let percent = if total_size > 0 {
-                                downloaded as f64 / total_size as f64 * 100.0
-                            } else {
-                                0.0
-                            };
-
-                            reporter.report(InstallPhase::Downloading, InstallStatus::InProgress { percent });
-                            last_report = Instant::now();
-                        }
-                        Some(Err(e)) => {
-                            tracing::error!(phase = "download", error = %e, "Error while downloading file");
-                            reporter.report(InstallPhase::Downloading, InstallStatus::Failed { reason: e.to_string() });
-                            return Err(PobError::DownloadFailed(e.to_string()));
-                        }
-                        None => {
-                            writer.flush().await?;
-
-                            tracing::info!(phase = "download", elapsed = ?start.elapsed(), "Download completed");
-                            reporter.report(InstallPhase::Downloading, InstallStatus::Completed);
-                            return Ok(());
-                        }
-                    }
-                }
-            }
-        }
+        let config = ParallelDownloadConfig::default();
+        let downloader = ParallelDownloader::new(&self.client, config);
+        downloader
+            .download(file_id, dst.as_ref(), cancel_token, reporter)
+            .await
     }
 
     pub(crate) async fn extract_with_progress<P: AsRef<std::path::Path>>(
