@@ -1,13 +1,14 @@
 <script lang="ts">
   import { commands, events, type GoogleDriveFileInfo, type PobVersion, type InstallProgress, type ErrorKind } from "@/bindings";
   import { onMount, onDestroy } from "svelte";
+  import { openUrl } from "@tauri-apps/plugin-opener";
   import { Button } from "@/components/ui/button";
   import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
   import { Badge } from "@/components/ui/badge";
   import { Progress } from "@/components/ui/progress";
   import * as Alert from "@/components/ui/alert/index.js";
   import * as AlertDialog from "@/components/ui/alert-dialog/index.js";
-  import { Package, Check, AlertCircle, RefreshCw } from "@lucide/svelte";
+   import { Package, Check, AlertCircle, RefreshCw, ExternalLink } from "@lucide/svelte";
 
   let installedVersion = $state<PobVersion | null>(null);
   let latestVersion = $state<GoogleDriveFileInfo | null>(null);
@@ -24,17 +25,17 @@
   // Derived states for UI logic
   let isInstalled = $derived(installedVersion !== null);
   let isInstalling = $derived(
-    installProgress !== null && 
+    installProgress !== null &&
     (installProgress.status === "started" || installProgress.status === "inProgress")
   );
   let hasUpdate = $derived(
-    isInstalled && 
-    latestVersionString !== null && 
+    isInstalled &&
+    latestVersionString !== null &&
     installedVersion!.version !== latestVersionString
   );
   let isUpToDate = $derived(
-    isInstalled && 
-    latestVersionString !== null && 
+    isInstalled &&
+    latestVersionString !== null &&
     installedVersion!.version === latestVersionString
   );
 
@@ -70,7 +71,7 @@
       // Silently ignore cancelled operations
       return;
     }
-    
+
     // All non-cancelled variants have a message property
     error = { kind: errorKind.kind, message: errorKind.message };
   }
@@ -170,6 +171,14 @@
     }
   }
 
+  async function openSource() {
+    try {
+      await openUrl("https://gall.dcinside.com/mgallery/board/view/?id=pathofexile&no=991032");
+    } catch (e) {
+      error = { kind: "unknown", message: `브라우저 열기 실패: ${e}` };
+    }
+  }
+
   function getPhaseText(phase: string): string {
     switch (phase) {
       case "downloading": return "다운로드 중";
@@ -257,9 +266,9 @@
               {/if}
             {:else}
               <span class="text-sm text-muted-foreground">확인 필요</span>
-              <Button 
-                variant="ghost" 
-                size="sm" 
+              <Button
+                variant="ghost"
+                size="sm"
                 onclick={() => checkLatestVersion(true)}
                 disabled={isFetchingLatest}
                 class="h-6 px-2"
@@ -268,14 +277,27 @@
               </Button>
             {/if}
           </div>
-        </div>
+         </div>
 
-        <!-- Action Buttons -->
+         <!-- Source Row -->
+         <div class="flex items-center justify-between">
+           <span class="text-sm text-muted-foreground">출처</span>
+            <Button
+              variant="link"
+              onclick={openSource}
+              class="h-auto p-0 text-sm font-normal gap-1"
+            >
+              <ExternalLink class="h-3 w-3" />
+              패스 오브 엑자일 갤러리
+            </Button>
+         </div>
+
+         <!-- Action Buttons -->
         <div class="flex gap-2 pt-2">
           {#if !isInstalled}
             <!-- Not installed: Show Install button only -->
-            <Button 
-              onclick={install} 
+            <Button
+              onclick={install}
               disabled={isLoading || !latestVersion || isInstalling}
               class="flex-1"
             >
@@ -283,23 +305,23 @@
             </Button>
           {:else if hasUpdate}
             <!-- Installed with update available -->
-            <Button 
-              onclick={install} 
+            <Button
+              onclick={install}
               disabled={isLoading || !latestVersion || isInstalling}
               class="flex-1"
             >
               업데이트
             </Button>
-            <Button 
-              onclick={execute} 
+            <Button
+              onclick={execute}
               disabled={isLoading || isInstalling}
               variant="outline"
               class="flex-1"
             >
               실행
             </Button>
-            <Button 
-              onclick={() => showUninstallDialog = true} 
+            <Button
+              onclick={() => showUninstallDialog = true}
               disabled={isLoading || isInstalling}
               variant="ghost"
               class="text-destructive hover:text-destructive"
@@ -308,15 +330,15 @@
             </Button>
           {:else}
             <!-- Installed and up to date -->
-            <Button 
-              onclick={execute} 
+            <Button
+              onclick={execute}
               disabled={isLoading || isInstalling}
               class="flex-1"
             >
               실행
             </Button>
-            <Button 
-              onclick={() => showUninstallDialog = true} 
+            <Button
+              onclick={() => showUninstallDialog = true}
               disabled={isLoading || isInstalling}
               variant="ghost"
               class="text-destructive hover:text-destructive"
@@ -341,19 +363,19 @@
                 {installProgress ? getPhaseText(installProgress.phase) : "준비 중"}
               </span>
               <span class="font-mono">
-                {installProgress?.status === "inProgress" 
-                  ? `${installProgress.percent.toFixed(0)}%` 
+                {installProgress?.status === "inProgress"
+                  ? `${installProgress.percent.toFixed(0)}%`
                   : "0%"}
               </span>
             </div>
-            <Progress 
-              value={installProgress?.status === "inProgress" ? installProgress.percent : 0} 
-              max={100} 
+            <Progress
+              value={installProgress?.status === "inProgress" ? installProgress.percent : 0}
+              max={100}
             />
           </div>
-          <Button 
-            onclick={cancelInstall} 
-            variant="outline" 
+          <Button
+            onclick={cancelInstall}
+            variant="outline"
             class="w-full"
           >
             취소
