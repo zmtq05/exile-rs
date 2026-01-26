@@ -55,6 +55,14 @@ async executePob() : Promise<Result<null, ErrorKind>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+async getInstallPath() : Promise<Result<string, ErrorKind>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_install_path") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 

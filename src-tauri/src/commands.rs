@@ -135,3 +135,9 @@ pub async fn execute_pob(manager: State<'_, PobManager>) -> Result<()> {
 
     Ok(())
 }
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_install_path(manager: State<'_, PobManager>) -> Result<String, ErrorKind> {
+    Ok(manager.install_path().to_string_lossy().to_string())
+}

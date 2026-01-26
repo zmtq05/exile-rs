@@ -39,7 +39,7 @@
 
 	<Sidebar.Content>
 		<Sidebar.Group>
-			<Sidebar.GroupLabel>Navigation</Sidebar.GroupLabel>
+			<Sidebar.GroupLabel>메뉴</Sidebar.GroupLabel>
 			<Sidebar.GroupContent>
 				<Sidebar.Menu>
 					{#each menuItems as item (item.title)}
@@ -59,6 +59,10 @@
 		</Sidebar.Group>
 	</Sidebar.Content>
 
-	<Sidebar.Footer />
+	<Sidebar.Footer class="p-2">
+		<div class="flex items-center justify-center text-xs text-muted-foreground">
+			<span class="group-data-[collapsible=icon]:hidden">v0.1.0</span>
+		</div>
+	</Sidebar.Footer>
 	<Sidebar.Rail />
 </Sidebar.Root>

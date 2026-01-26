@@ -82,6 +82,7 @@ fn specta_builder() -> tauri_specta::Builder {
             commands::parse_version,
             commands::uninstall_pob,
             commands::execute_pob,
+            commands::get_install_path,
         ])
         .events(collect_events![InstallProgress, CancelEvent,]);
 
