@@ -1049,6 +1049,7 @@ dependencies = [
  "pin-project-lite",
  "regex",
  "reqwest 0.13.1",
+ "scopeguard",
  "scraper",
  "serde",
  "serde_json",

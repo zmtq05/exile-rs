@@ -34,7 +34,6 @@
   }
 
   let unlistenInstallProgress: (() => void) | null = null;
-  let unlistenCancelEvent: (() => void) | null = null;
 
   // Derived states for UI logic
   let isInstalled = $derived(installedVersion !== null);
@@ -71,10 +70,6 @@
       }
     });
 
-    unlistenCancelEvent = await events.cancelEvent.listen(() => {
-      console.log("취소 이벤트 수신됨");
-    });
-
     // Initial checks
     await Promise.all([
       checkInstalledVersion(),
@@ -86,7 +81,6 @@
 
   onDestroy(() => {
     if (unlistenInstallProgress) unlistenInstallProgress();
-    if (unlistenCancelEvent) unlistenCancelEvent();
   });
 
   function handleError(errorKind: ErrorKind, context: string) {

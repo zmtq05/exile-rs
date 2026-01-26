@@ -2,7 +2,7 @@ mod commands;
 pub mod errors;
 pub mod pob;
 pub mod util;
-use std::time::Duration;
+use std::{path::Path, time::Duration};
 
 use tauri::Manager;
 use tauri_plugin_tracing::{
@@ -11,11 +11,39 @@ use tauri_plugin_tracing::{
 use tauri_specta::{collect_commands, collect_events};
 
 use crate::pob::{
-    Installing,
-    google_drive::GoogleDriveClient,
-    manager::{CancelEvent, PobManager},
+    InstallCancelToken, google_drive::GoogleDriveClient, manager::PobManager,
     progress::InstallProgress,
 };
+
+/// Issue 4: Cleanup orphaned temp directories from previous crashes.
+/// Removes any `pob_*` directories in the temp folder (matching generate_task_id format).
+fn cleanup_orphaned_temp_dirs(temp_dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(temp_dir) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir()
+            && let Some(name) = path.file_name().and_then(|n| n.to_str())
+            && name.starts_with("pob_")
+        {
+            tracing::info!(
+                operation = "cleanup",
+                path = %path.display(),
+                "Removing orphaned temp directory from previous session"
+            );
+            if let Err(e) = std::fs::remove_dir_all(&path) {
+                tracing::warn!(
+                    operation = "cleanup",
+                    path = %path.display(),
+                    error = %e,
+                    "Failed to remove orphaned temp directory"
+                );
+            }
+        }
+    }
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -52,7 +80,7 @@ pub fn run() {
                 .build(),
         )
         .invoke_handler(specta_builder.invoke_handler())
-        .manage(Installing::default())
+        .manage(InstallCancelToken::default())
         .setup(move |app| {
             specta_builder.mount_events(app.handle());
 
@@ -62,6 +90,11 @@ pub fn run() {
                 .path()
                 .app_local_data_dir()
                 .expect("Failed to get app local data dir");
+
+            // Issue 4: Cleanup orphaned temp directories from previous crashes
+            if let Ok(temp_dir) = app.path().temp_dir() {
+                cleanup_orphaned_temp_dirs(&temp_dir);
+            }
 
             let pob_manager = PobManager::new(client, data_dir);
             app.manage(pob_manager);
@@ -84,7 +117,7 @@ fn specta_builder() -> tauri_specta::Builder {
             commands::execute_pob,
             commands::get_install_path,
         ])
-        .events(collect_events![InstallProgress, CancelEvent,]);
+        .events(collect_events![InstallProgress,]);
 
     #[cfg(debug_assertions)]
     {

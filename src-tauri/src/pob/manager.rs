@@ -5,10 +5,7 @@ use std::{
     time::Instant,
 };
 
-use serde::{Deserialize, Serialize};
-use specta::Type;
-use tauri_specta::Event;
-use tokio::{fs, sync::Mutex};
+use tokio::{fs, sync::Mutex, sync::RwLock};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -27,6 +24,10 @@ pub struct PobManager {
     data_dir: PathBuf,
 
     cached_result: Mutex<HashMap<String, GoogleDriveFileInfo>>,
+
+    /// Lock for mutating operations (install, uninstall).
+    /// Write lock = exclusive access for install/uninstall.
+    operation_lock: RwLock<()>,
 }
 
 impl PobManager {
@@ -35,7 +36,14 @@ impl PobManager {
             client,
             data_dir,
             cached_result: Mutex::new(HashMap::new()),
+            operation_lock: RwLock::new(()),
         }
+    }
+
+    /// Try to acquire exclusive lock for install/uninstall.
+    /// Returns guard on success, None if another operation in progress.
+    pub fn try_write_lock(&self) -> Option<tokio::sync::RwLockWriteGuard<'_, ()>> {
+        self.operation_lock.try_write().ok()
     }
 
     pub fn install_path(&self) -> PathBuf {
@@ -478,9 +486,6 @@ fn detect_nested_structure(
         "ZIP does not contain required folders (POE1 POB, POE2 POB, Data)".into(),
     ))
 }
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Type, Event)]
-pub struct CancelEvent;
 
 // ============================================================================
 // Install Context & Workflow

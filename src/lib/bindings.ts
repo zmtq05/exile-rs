@@ -29,8 +29,13 @@ async installPob(fileData: GoogleDriveFileInfo | null, downloadMode: DownloadMod
     else return { status: "error", error: e  as any };
 }
 },
-async cancelInstallPob() : Promise<void> {
-    await TAURI_INVOKE("cancel_install_pob");
+async cancelInstallPob() : Promise<Result<null, ErrorKind>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cancel_install_pob") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 },
 async parseVersion(fileName: string) : Promise<Result<string, ErrorKind>> {
     try {
@@ -70,10 +75,8 @@ async getInstallPath() : Promise<Result<string, ErrorKind>> {
 
 
 export const events = __makeEvents__<{
-cancelEvent: CancelEvent,
 installProgress: InstallProgress
 }>({
-cancelEvent: "cancel-event",
 installProgress: "install-progress"
 })
 
@@ -83,7 +86,6 @@ installProgress: "install-progress"
 
 /** user-defined types **/
 
-export type CancelEvent = null
 /**
  * Download mode selection
  */

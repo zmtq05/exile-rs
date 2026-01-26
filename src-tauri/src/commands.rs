@@ -1,17 +1,15 @@
-use std::{
-    process::Stdio,
-    sync::{Arc, atomic::Ordering},
-};
+use std::{process::Stdio, sync::Arc};
 
+use scopeguard::defer;
 use tauri::{AppHandle, Manager, State};
-use tauri_specta::Event;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
     errors::ErrorKind,
     pob::{
+        InstallCancelToken,
         google_drive::GoogleDriveFileInfo,
-        manager::{CancelEvent, PobManager},
+        manager::PobManager,
         parallel_download::DownloadMode,
         progress::{InstallReporter, TauriProgressSink},
         version::PobVersion,
@@ -46,6 +44,11 @@ pub async fn installed_pob_info(manager: State<'_, PobManager>) -> Result<Option
 #[tauri::command]
 #[specta::specta]
 pub async fn uninstall_pob(manager: State<'_, PobManager>, app: AppHandle) -> Result<()> {
+    // Acquire exclusive lock for uninstall operation
+    let _guard = manager
+        .try_write_lock()
+        .ok_or_else(|| ErrorKind::Conflict("이미 다른 작업이 진행 중입니다.".into()))?;
+
     let task_id = generate_task_id("pob");
     let reporter = InstallReporter::new(task_id, Arc::new(TauriProgressSink::new(app)));
 
@@ -59,62 +62,64 @@ pub async fn install_pob(
     file_data: Option<GoogleDriveFileInfo>,
     download_mode: DownloadMode,
     manager: State<'_, PobManager>,
-    installing: State<'_, crate::pob::Installing>,
+    cancel_state: State<'_, InstallCancelToken>,
     app: AppHandle,
 ) -> Result<bool> {
-    // Concurrency guard
-    if installing
-        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
-        .is_err()
-    {
-        return Err(ErrorKind::Conflict(
-            "이미 다른 설치 작업이 진행 중입니다.".into(),
-        ));
+    // Acquire exclusive lock for install operation (Issue 5: RwLock)
+    let _guard = manager
+        .try_write_lock()
+        .ok_or_else(|| ErrorKind::Conflict("이미 다른 설치 작업이 진행 중입니다.".into()))?;
+
+    // Issue 1: Store cancellation token in managed state (no event listener)
+    let cancel_token = CancellationToken::new();
+    cancel_state.set(cancel_token.clone());
+
+    // Issue 1: Ensure token is cleared on all exit paths (via defer)
+    defer! {
+        cancel_state.take();
     }
 
-    let result = install_pob_internal(file_data, download_mode, manager, app).await;
-    installing.store(false, Ordering::Release);
-    result
-}
-
-async fn install_pob_internal(
-    file_data: Option<GoogleDriveFileInfo>,
-    download_mode: DownloadMode,
-    manager: State<'_, PobManager>,
-    app: AppHandle,
-) -> Result<bool> {
     // Get file info
     let file_info = match file_data {
         Some(data) => data,
         None => manager.fetch_latest_file(false).await?,
     };
 
-    // Create reporter with unique task_id
+    // Issue 4: Create isolated per-task temp directory
     let task_id = generate_task_id("pob");
-    let reporter = InstallReporter::new(task_id, Arc::new(TauriProgressSink::new(app.clone())));
+    let base_temp = app.path().temp_dir()?;
+    let temp_dir = base_temp.join(&task_id);
+    tokio::fs::create_dir_all(&temp_dir)
+        .await
+        .map_err(|e| ErrorKind::Io(format!("임시 디렉토리 생성 실패: {}", e)))?;
 
-    // Get temp directory
-    let temp_dir = app.path().temp_dir()?;
+    // Create reporter
+    let reporter = InstallReporter::new(&task_id, Arc::new(TauriProgressSink::new(app)));
 
-    // Setup cancellation
-    let cancel_token = CancellationToken::new();
-    let cancel_token_clone = cancel_token.clone();
-    CancelEvent::once(&app, move |_event| {
-        cancel_token_clone.cancel();
-    });
+    // Execute install with guaranteed temp cleanup
+    let result = manager
+        .install(
+            file_info,
+            temp_dir.clone(),
+            download_mode,
+            cancel_token,
+            reporter,
+        )
+        .await;
 
-    // Delegate to manager
-    manager
-        .install(file_info, temp_dir, download_mode, cancel_token, reporter)
-        .await?;
+    // Issue 4: Always cleanup temp subdirectory
+    let _ = tokio::fs::remove_dir_all(&temp_dir).await;
 
+    result?;
     Ok(true)
 }
 
 #[tauri::command]
 #[specta::specta]
-pub async fn cancel_install_pob(app: AppHandle) {
-    _ = CancelEvent.emit(&app);
+pub async fn cancel_install_pob(cancel_state: State<'_, InstallCancelToken>) -> Result<()> {
+    // Issue 1: Directly cancel via managed state (no event needed)
+    cancel_state.cancel();
+    Ok(())
 }
 
 #[tauri::command]
