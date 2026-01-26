@@ -1,32 +1,47 @@
 <script lang="ts">
-  import { commands, events, type GoogleDriveFileInfo, type PobVersion, type InstallProgress } from "@/bindings";
+  import { commands, events, type GoogleDriveFileInfo, type PobVersion, type InstallProgress, type ErrorKind } from "@/bindings";
   import { onMount, onDestroy } from "svelte";
   import { Button } from "@/components/ui/button";
-  import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+  import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
   import { Badge } from "@/components/ui/badge";
   import { Progress } from "@/components/ui/progress";
   import * as Alert from "@/components/ui/alert/index.js";
-  import { Input } from "@/components/ui/input";
-  import { Label } from "@/components/ui/label";
+  import { Package, Check, AlertCircle, RefreshCw } from "@lucide/svelte";
 
   let installedVersion = $state<PobVersion | null>(null);
   let latestVersion = $state<GoogleDriveFileInfo | null>(null);
+  let latestVersionString = $state<string | null>(null);
   let isLoading = $state(false);
-  let error = $state<string | null>(null);
+  let isFetchingLatest = $state(false);
+  let error = $state<{ kind: string; message?: string } | null>(null);
   let installProgress = $state<InstallProgress | null>(null);
-
-  let parseFileName = $state("");
-  let parseResult = $state<string | null>(null);
 
   let unlistenInstallProgress: (() => void) | null = null;
   let unlistenCancelEvent: (() => void) | null = null;
 
+  // Derived states for UI logic
+  let isInstalled = $derived(installedVersion !== null);
+  let isInstalling = $derived(
+    installProgress !== null && 
+    (installProgress.status === "started" || installProgress.status === "inProgress")
+  );
+  let hasUpdate = $derived(
+    isInstalled && 
+    latestVersionString !== null && 
+    installedVersion!.version !== latestVersionString
+  );
+  let isUpToDate = $derived(
+    isInstalled && 
+    latestVersionString !== null && 
+    installedVersion!.version === latestVersionString
+  );
+
   onMount(async () => {
-    // 이벤트 리스너 설정
+    // Event listeners
     unlistenInstallProgress = await events.installProgress.listen((event) => {
       installProgress = event.payload;
 
-      // 설치 완료/실패/취소 시 설치된 버전 정보 새로고침
+      // Refresh installed version on completion/failure/cancel
       if (event.payload.status === "completed" ||
           event.payload.status === "failed" ||
           event.payload.status === "cancelled") {
@@ -35,17 +50,28 @@
     });
 
     unlistenCancelEvent = await events.cancelEvent.listen(() => {
-        console.log("취소 이벤트 수신됨");
+      console.log("취소 이벤트 수신됨");
     });
 
-    // 초기 설치 버전 확인
+    // Initial checks
     await checkInstalledVersion();
+    await checkLatestVersion(false);
   });
 
   onDestroy(() => {
     if (unlistenInstallProgress) unlistenInstallProgress();
     if (unlistenCancelEvent) unlistenCancelEvent();
   });
+
+  function handleError(errorKind: ErrorKind, context: string) {
+    if (errorKind.kind === "cancelled") {
+      // Silently ignore cancelled operations
+      return;
+    }
+    
+    // All non-cancelled variants have a message property
+    error = { kind: errorKind.kind, message: errorKind.message };
+  }
 
   async function checkInstalledVersion() {
     isLoading = true;
@@ -55,35 +81,40 @@
       if (result.status === "ok") {
         installedVersion = result.data;
       } else {
-        error = `설치된 버전 확인 실패: ${JSON.stringify(result.error)}`;
+        handleError(result.error, "설치된 버전 확인 실패");
       }
     } catch (e) {
-      error = `오류: ${e}`;
+      error = { kind: "unknown", message: `오류: ${e}` };
     } finally {
       isLoading = false;
     }
   }
 
   async function checkLatestVersion(refresh = false) {
-    isLoading = true;
+    isFetchingLatest = true;
     error = null;
     try {
       const result = await commands.fetchPob(refresh);
       if (result.status === "ok") {
         latestVersion = result.data;
+        // Parse version from filename
+        const parseResult = await commands.parseVersion(result.data.name);
+        if (parseResult.status === "ok") {
+          latestVersionString = parseResult.data;
+        }
       } else {
-        error = `최신 버전 확인 실패: ${result.error}`;
+        handleError(result.error, "최신 버전 확인 실패");
       }
     } catch (e) {
-      error = `오류: ${e}`;
+      error = { kind: "unknown", message: `오류: ${e}` };
     } finally {
-      isLoading = false;
+      isFetchingLatest = false;
     }
   }
 
   async function install() {
     if (!latestVersion) {
-      error = "먼저 최신 버전을 확인해주세요.";
+      error = { kind: "domain", message: "먼저 최신 버전을 확인해주세요." };
       return;
     }
 
@@ -93,13 +124,11 @@
     try {
       const result = await commands.installPob(latestVersion);
       if (result.status === "error") {
-        error = `설치 실패: ${JSON.stringify(result.error)}`;
+        handleError(result.error, "설치 실패");
         installProgress = null;
-      } else {
-        console.log(result.data);
       }
     } catch (e) {
-      error = `오류: ${e}`;
+      error = { kind: "unknown", message: `오류: ${e}` };
       installProgress = null;
     } finally {
       isLoading = false;
@@ -110,7 +139,7 @@
     try {
       await commands.cancelInstallPob();
     } catch (e) {
-      error = `취소 실패: ${e}`;
+      error = { kind: "unknown", message: `취소 실패: ${e}` };
     }
   }
 
@@ -120,40 +149,24 @@
     isLoading = true;
     error = null;
     try {
-        const result = await commands.uninstallPob();
-        if (result.status === "error") {
-             error = `제거 실패: ${JSON.stringify(result.error)}`;
-        } else {
-             await checkInstalledVersion();
-        }
+      const result = await commands.uninstallPob();
+      if (result.status === "error") {
+        handleError(result.error, "제거 실패");
+      } else {
+        await checkInstalledVersion();
+      }
     } catch (e) {
-        error = `오류: ${e}`;
+      error = { kind: "unknown", message: `오류: ${e}` };
     } finally {
-        isLoading = false;
+      isLoading = false;
     }
   }
 
-  async function testParseVersion() {
-      if (!parseFileName.trim()) {
-          error = "파일 이름을 입력해주세요.";
-          return;
-      }
-
-      isLoading = true;
-      error = null;
-      parseResult = null;
-      try {
-          const result = await commands.parseVersion(parseFileName);
-          if (result.status === "ok") {
-              parseResult = result.data;
-          } else {
-              error = `파싱 실패: ${JSON.stringify(result.error)}`;
-          }
-      } catch (e) {
-          error = `오류: ${e}`;
-      } finally {
-          isLoading = false;
-      }
+  async function execute() {
+    const result = await commands.executePob();
+    if (result.status === "error") {
+      handleError(result.error, "실행 실패");
+    }
   }
 
   function getPhaseText(phase: string): string {
@@ -161,211 +174,191 @@
       case "downloading": return "다운로드 중";
       case "extracting": return "압축 해제 중";
       case "backingUp": return "백업 중";
-      case "installing": return "설치 중";
+      case "moving": return "이동 중";
       case "restoring": return "복구 중";
       case "finalizing": return "마무리 중";
       case "uninstalling": return "제거 중";
       default: return phase;
     }
   }
-
-  function getStatusText(progress: InstallProgress): string {
-    switch (progress.status) {
-      case "started":
-        return `시작됨${progress.total_size ? ` (총 크기: ${(progress.total_size / 1024 / 1024).toFixed(2)} MB)` : ''}`;
-      case "inProgress": return `진행 중 (${progress.percent.toFixed(1)}%)`;
-      case "completed": return "완료";
-      case "failed": return `실패: ${progress.reason}`;
-      case "cancelled": return "취소됨";
-      default: return "알 수 없음";
-    }
-  }
-
-  function getStatusBadgeVariant(status: string): "default" | "secondary" | "destructive" | "outline" {
-    switch (status) {
-      case "completed": return "default";
-      case "failed": return "destructive";
-      case "cancelled": return "secondary";
-      default: return "outline";
-    }
-  }
-
-  function execute() {
-      commands.executePob();
-  }
 </script>
 
-<main class="container mx-auto p-6 max-w-4xl">
-  <h1 class="text-3xl font-bold mb-6 text-center">Path of Building 관리자</h1>
+<main class="min-h-screen bg-background p-8">
+  <div class="mx-auto max-w-xl space-y-6">
+    <!-- Header -->
+    <div class="text-center">
+      <h1 class="text-2xl font-semibold tracking-tight">Path of Building</h1>
+      <p class="text-sm text-muted-foreground">버전 관리</p>
+    </div>
 
-  <!-- {#if error} -->
-    <Alert.Root variant="destructive" class="mb-4">
-      <Alert.Description>{error}</Alert.Description>
-    </Alert.Root>
-  <!-- {/if} -->
-
-  <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-    <!-- 설치된 버전 카드 -->
-    <Card>
-      <CardHeader>
-        <CardTitle>설치된 버전</CardTitle>
-        <CardDescription>현재 시스템에 설치된 PoB 버전</CardDescription>
-      </CardHeader>
-      <CardContent>
-        {#if installedVersion}
-          <div class="space-y-2">
-            <div class="flex items-center justify-between">
-              <span class="text-sm text-muted-foreground">버전</span>
-              <Badge>{installedVersion.version}</Badge>
-            </div>
-            <div class="flex items-center justify-between">
-              <span class="text-sm text-muted-foreground">설치일</span>
-              <span class="text-sm">{new Date(installedVersion.installedAt).toLocaleString('ko-KR')}</span>
-            </div>
-            <div class="flex items-center justify-between">
-              <span class="text-sm text-muted-foreground">파일 ID</span>
-              <span class="text-xs font-mono">{installedVersion.fileId.slice(0, 10)}...</span>
-            </div>
-          </div>
-        {:else}
-          <p class="text-sm text-muted-foreground">설치된 버전이 없습니다.</p>
-        {/if}
-      </CardContent>
-      <CardFooter class="flex gap-2">
-        <Button onclick={checkInstalledVersion} disabled={isLoading} class="flex-1">
-          {isLoading ? "확인 중..." : "버전 확인"}
-        </Button>
-        {#if installedVersion}
-            <Button onclick={uninstall} disabled={isLoading} variant="destructive" class="flex-1">
-                제거
-            </Button>
-            <Button onclick={execute} disabled={isLoading} variant="outline" class="flex-1">
-                실행
-            </Button>
-        {/if}
-      </CardFooter>
-    </Card>
-
-    <!-- 최신 버전 카드 -->
-    <Card>
-      <CardHeader>
-        <CardTitle>최신 버전</CardTitle>
-        <CardDescription>Google Drive에서 가져온 최신 버전</CardDescription>
-      </CardHeader>
-      <CardContent>
-        {#if latestVersion}
-          <div class="space-y-2">
-            <div class="flex items-center justify-between">
-              <span class="text-sm text-muted-foreground">이름</span>
-              <span class="text-sm font-medium">{latestVersion.name}</span>
-            </div>
-            <div class="flex items-center justify-between">
-              <span class="text-sm text-muted-foreground">타입</span>
-              <Badge variant={latestVersion.isFolder ? "secondary" : "outline"}>
-                {latestVersion.isFolder ? "폴더" : "파일"}
-              </Badge>
-            </div>
-            <div class="flex items-center justify-between">
-              <span class="text-sm text-muted-foreground">ID</span>
-              <span class="text-xs font-mono">{latestVersion.id.slice(0, 10)}...</span>
-            </div>
-          </div>
-        {:else}
-          <p class="text-sm text-muted-foreground">최신 버전을 확인하지 않았습니다.</p>
-        {/if}
-      </CardContent>
-      <CardFooter class="flex gap-2">
-        <Button onclick={() => checkLatestVersion(false)} disabled={isLoading} class="flex-1">
-          {isLoading ? "확인 중..." : "최신 버전 확인"}
-        </Button>
-        <Button onclick={() => checkLatestVersion(true)} disabled={isLoading} variant="outline" class="flex-1">
-          새로고침
-        </Button>
-      </CardFooter>
-    </Card>
-  </div>
-
-  <!-- 설치 제어 카드 -->
-  <Card class="mb-6">
-    <CardHeader>
-      <CardTitle>설치 관리</CardTitle>
-      <CardDescription>Path of Building 설치 및 제어</CardDescription>
-    </CardHeader>
-    <CardContent class="space-y-4">
-      {#if installProgress}
-        <div class="space-y-3">
-          <div class="flex items-center justify-between">
-            <span class="text-sm font-medium">진행 단계</span>
-            <Badge>{getPhaseText(installProgress.phase)}</Badge>
-          </div>
-          <div class="flex items-center justify-between">
-            <span class="text-sm font-medium">상태</span>
-            <Badge variant={getStatusBadgeVariant(installProgress.status)}>
-              {getStatusText(installProgress)}
-            </Badge>
-          </div>
-          {#if installProgress.status === "inProgress"}
-            <div class="space-y-2">
-              <Progress value={installProgress.percent} max={100} />
-              <p class="text-xs text-muted-foreground text-center">
-                {installProgress.percent.toFixed(1)}%
-              </p>
-            </div>
+    <!-- Error Alert -->
+    {#if error}
+      <Alert.Root variant={error.kind === "conflict" ? "default" : "destructive"}>
+        <AlertCircle class="h-4 w-4" />
+        <Alert.Title>
+          {#if error.kind === "conflict"}
+            경고
+          {:else}
+            오류
           {/if}
-        </div>
-      {:else}
-        <p class="text-sm text-muted-foreground text-center">진행 중인 작업이 없습니다.</p>
-      {/if}
-    </CardContent>
-    <CardFooter class="flex gap-2">
-      <Button
-        onclick={install}
-        disabled={isLoading || !latestVersion || (installProgress !== null && installProgress.status === "inProgress")}
-        class="flex-1"
-      >
-        설치
-      </Button>
-      <Button
-        onclick={cancelInstall}
-        disabled={!installProgress || installProgress.status !== "inProgress"}
-        variant="destructive"
-        class="flex-1"
-      >
-        설치 취소
-      </Button>
-    </CardFooter>
-  </Card>
+        </Alert.Title>
+        <Alert.Description>{error.message}</Alert.Description>
+      </Alert.Root>
+    {/if}
 
-  <!-- 버전 파싱 테스트 카드 -->
-  <Card>
-      <CardHeader>
-          <CardTitle>버전 파싱 테스트</CardTitle>
-          <CardDescription>파일 이름에서 버전 정보 추출 테스트</CardDescription>
+    <!-- Version Info Card -->
+    <Card>
+      <CardHeader class="pb-4">
+        <CardTitle class="flex items-center gap-2 text-base font-medium">
+          <Package class="h-4 w-4" />
+          버전 정보
+        </CardTitle>
       </CardHeader>
-      <CardContent>
-          <div class="grid w-full items-center gap-4">
-            <div class="flex flex-col space-y-1.5">
-                <Label for="fileName">파일 이름</Label>
-                <Input id="fileName" placeholder="예: PathOfBuilding-2.40.0.zip" bind:value={parseFileName} />
-            </div>
-            {#if parseResult}
-                <div class="flex items-center gap-2 p-2 bg-muted rounded-md">
-                    <span class="text-sm font-medium">추출된 버전:</span>
-                    <Badge variant="outline">{parseResult}</Badge>
-                </div>
+      <CardContent class="space-y-4">
+        <!-- Installed Version Row -->
+        <div class="flex items-center justify-between">
+          <span class="text-sm text-muted-foreground">설치됨</span>
+          <div class="flex items-center gap-2">
+            {#if installedVersion}
+              <span class="font-mono text-sm">v{installedVersion.version}</span>
+              {#if isUpToDate}
+                <Badge variant="secondary" class="gap-1">
+                  <Check class="h-3 w-3" />
+                  최신
+                </Badge>
+              {/if}
+            {:else}
+              <span class="text-sm text-muted-foreground">설치되지 않음</span>
             {/if}
           </div>
-      </CardContent>
-      <CardFooter>
-          <Button onclick={testParseVersion} disabled={isLoading} class="w-full">
-              파싱 테스트
-          </Button>
-      </CardFooter>
-  </Card>
-</main>
+        </div>
 
-<style>
-  :global(body) {
-    font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
-  }
-</style>
+        <!-- Install Date Row (if installed) -->
+        {#if installedVersion}
+          <div class="flex items-center justify-between">
+            <span class="text-sm text-muted-foreground">설치일</span>
+            <span class="text-sm">
+              {new Date(installedVersion.installedAt).toLocaleDateString('ko-KR')}
+            </span>
+          </div>
+        {/if}
+
+        <!-- Latest Version Row -->
+        <div class="flex items-center justify-between">
+          <span class="text-sm text-muted-foreground">최신</span>
+          <div class="flex items-center gap-2">
+            {#if isFetchingLatest}
+              <RefreshCw class="h-4 w-4 animate-spin text-muted-foreground" />
+            {:else if latestVersionString}
+              <span class="font-mono text-sm">v{latestVersionString}</span>
+              {#if hasUpdate}
+                <Badge variant="default">업데이트 가능</Badge>
+              {/if}
+            {:else}
+              <span class="text-sm text-muted-foreground">확인 필요</span>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onclick={() => checkLatestVersion(true)}
+                disabled={isFetchingLatest}
+                class="h-6 px-2"
+              >
+                <RefreshCw class="h-3 w-3" />
+              </Button>
+            {/if}
+          </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="flex gap-2 pt-2">
+          {#if !isInstalled}
+            <!-- Not installed: Show Install button only -->
+            <Button 
+              onclick={install} 
+              disabled={isLoading || !latestVersion || isInstalling}
+              class="flex-1"
+            >
+              설치
+            </Button>
+          {:else if hasUpdate}
+            <!-- Installed with update available -->
+            <Button 
+              onclick={install} 
+              disabled={isLoading || !latestVersion || isInstalling}
+              class="flex-1"
+            >
+              업데이트
+            </Button>
+            <Button 
+              onclick={execute} 
+              disabled={isLoading || isInstalling}
+              variant="outline"
+              class="flex-1"
+            >
+              실행
+            </Button>
+            <Button 
+              onclick={uninstall} 
+              disabled={isLoading || isInstalling}
+              variant="ghost"
+              class="text-destructive hover:text-destructive"
+            >
+              제거
+            </Button>
+          {:else}
+            <!-- Installed and up to date -->
+            <Button 
+              onclick={execute} 
+              disabled={isLoading || isInstalling}
+              class="flex-1"
+            >
+              실행
+            </Button>
+            <Button 
+              onclick={uninstall} 
+              disabled={isLoading || isInstalling}
+              variant="ghost"
+              class="text-destructive hover:text-destructive"
+            >
+              제거
+            </Button>
+          {/if}
+        </div>
+      </CardContent>
+    </Card>
+
+    <!-- Progress Card (only visible during installation) -->
+    {#if isInstalling}
+      <Card>
+        <CardHeader class="pb-3">
+          <CardTitle class="text-base font-medium">진행 상황</CardTitle>
+        </CardHeader>
+        <CardContent class="space-y-4">
+          <div class="space-y-2">
+            <div class="flex items-center justify-between text-sm">
+              <span class="text-muted-foreground">
+                {installProgress ? getPhaseText(installProgress.phase) : "준비 중"}
+              </span>
+              <span class="font-mono">
+                {installProgress?.status === "inProgress" 
+                  ? `${installProgress.percent.toFixed(0)}%` 
+                  : "0%"}
+              </span>
+            </div>
+            <Progress 
+              value={installProgress?.status === "inProgress" ? installProgress.percent : 0} 
+              max={100} 
+            />
+          </div>
+          <Button 
+            onclick={cancelInstall} 
+            variant="outline" 
+            class="w-full"
+          >
+            취소
+          </Button>
+        </CardContent>
+      </Card>
+    {/if}
+  </div>
+</main>
