@@ -6,13 +6,13 @@
 use std::{
     path::Path,
     sync::{
-        atomic::{AtomicU64, Ordering},
         Arc,
+        atomic::{AtomicU64, Ordering},
     },
     time::Instant,
 };
 
-use futures_util::{stream::FuturesUnordered, StreamExt};
+use futures_util::{StreamExt, stream::FuturesUnordered};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use tokio::{
@@ -58,8 +58,8 @@ impl Default for ParallelDownloadConfig {
     fn default() -> Self {
         Self {
             concurrency: 4,
-            min_parallel_size: 50 * 1024 * 1024,  // 50MB minimum (smaller files use single-stream)
-            chunk_size: 128 * 1024 * 1024,        // 128MB chunks (reduce HTTP connection overhead)
+            min_parallel_size: 50 * 1024 * 1024, // 50MB minimum (smaller files use single-stream)
+            chunk_size: 128 * 1024 * 1024,       // 128MB chunks (reduce HTTP connection overhead)
             mode: DownloadMode::Auto,
         }
     }
@@ -99,8 +99,10 @@ impl ProgressTracker {
 
         if should_report {
             let percent = downloaded as f64 / self.total_size as f64 * 100.0;
-            self.reporter
-                .report(InstallPhase::Downloading, InstallStatus::InProgress { percent });
+            self.reporter.report(
+                InstallPhase::Downloading,
+                InstallStatus::InProgress { percent },
+            );
         }
     }
 }
@@ -152,7 +154,13 @@ impl<'a> ParallelDownloader<'a> {
                         "Parallel download requested but server doesn't support Range, falling back to single-stream"
                     );
                     return self
-                        .download_single_stream(file_id, file_info.content_length, dst, cancel_token, reporter)
+                        .download_single_stream(
+                            file_id,
+                            file_info.content_length,
+                            dst,
+                            cancel_token,
+                            reporter,
+                        )
                         .await;
                 }
                 tracing::info!(
@@ -195,7 +203,13 @@ impl<'a> ParallelDownloader<'a> {
                         "Using single-stream download (auto: parallel not supported or file too small)"
                     );
                     return self
-                        .download_single_stream(file_id, file_info.content_length, dst, cancel_token, reporter)
+                        .download_single_stream(
+                            file_id,
+                            file_info.content_length,
+                            dst,
+                            cancel_token,
+                            reporter,
+                        )
                         .await;
                 }
             }
@@ -275,15 +289,8 @@ impl<'a> ParallelDownloader<'a> {
                         return Err(PobError::Cancelled);
                     }
 
-                    download_chunk(
-                        self.client,
-                        file_id,
-                        chunk,
-                        &file,
-                        &progress,
-                        cancel_token,
-                    )
-                    .await
+                    download_chunk(self.client, file_id, chunk, &file, &progress, cancel_token)
+                        .await
                 }
             })
             .collect();
@@ -444,7 +451,9 @@ async fn download_chunk(
     );
 
     let http_start = Instant::now();
-    let res = client.get_file_range(file_id, chunk.start, chunk.end).await?;
+    let res = client
+        .get_file_range(file_id, chunk.start, chunk.end)
+        .await?;
     let http_elapsed = http_start.elapsed();
 
     tracing::debug!(

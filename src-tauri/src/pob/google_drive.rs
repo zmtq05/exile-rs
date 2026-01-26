@@ -1,4 +1,4 @@
-use reqwest::{header, Response};
+use reqwest::{Response, header};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
