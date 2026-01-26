@@ -11,6 +11,7 @@
   import { Skeleton } from "@/components/ui/skeleton";
   import * as Alert from "@/components/ui/alert/index.js";
   import * as AlertDialog from "@/components/ui/alert-dialog/index.js";
+  import * as ToggleGroup from "@/components/ui/toggle-group/index.js";
   import { Package, Check, AlertCircle, RefreshCw, ExternalLink, Download, CheckCircle, AlertTriangle, FolderOpen, Settings } from "@lucide/svelte";
 
   let installedVersion = $state<PobVersion | null>(null);
@@ -235,7 +236,7 @@
   }
 </script>
 
-<main class="min-h-screen bg-background p-8">
+<main class="bg-background p-8">
   <div class="mx-auto max-w-xl space-y-6">
     <!-- Error Alert -->
     {#if error}
@@ -426,32 +427,17 @@
               <Settings class="h-3 w-3" />
               다운로드 방식
             </span>
-            <div class="flex gap-1">
-              <Button
-                size="sm"
-                variant={downloadMode === "auto" ? "default" : "outline"}
-                onclick={() => setDownloadMode("auto")}
-                class="h-7 px-2 text-xs"
-              >
-                자동
-              </Button>
-              <Button
-                size="sm"
-                variant={downloadMode === "parallel" ? "default" : "outline"}
-                onclick={() => setDownloadMode("parallel")}
-                class="h-7 px-2 text-xs"
-              >
-                병렬
-              </Button>
-              <Button
-                size="sm"
-                variant={downloadMode === "single" ? "default" : "outline"}
-                onclick={() => setDownloadMode("single")}
-                class="h-7 px-2 text-xs"
-              >
-                단일
-              </Button>
-            </div>
+            <ToggleGroup.Root
+              type="single"
+              value={downloadMode}
+              onValueChange={(value) => value && setDownloadMode(value as DownloadMode)}
+              variant="outline"
+              size="sm"
+            >
+              <ToggleGroup.Item value="auto" class="h-7 px-2 text-xs">자동</ToggleGroup.Item>
+              <ToggleGroup.Item value="parallel" class="h-7 px-2 text-xs">병렬</ToggleGroup.Item>
+              <ToggleGroup.Item value="single" class="h-7 px-2 text-xs">단일</ToggleGroup.Item>
+            </ToggleGroup.Root>
           </div>
         </CardContent>
         <CardFooter class="flex gap-2 justify-end">
