@@ -6,6 +6,7 @@
   import { Badge } from "@/components/ui/badge";
   import { Progress } from "@/components/ui/progress";
   import * as Alert from "@/components/ui/alert/index.js";
+  import * as AlertDialog from "@/components/ui/alert-dialog/index.js";
   import { Package, Check, AlertCircle, RefreshCw } from "@lucide/svelte";
 
   let installedVersion = $state<PobVersion | null>(null);
@@ -15,6 +16,7 @@
   let isFetchingLatest = $state(false);
   let error = $state<{ kind: string; message?: string } | null>(null);
   let installProgress = $state<InstallProgress | null>(null);
+  let showUninstallDialog = $state(false);
 
   let unlistenInstallProgress: (() => void) | null = null;
   let unlistenCancelEvent: (() => void) | null = null;
@@ -144,8 +146,7 @@
   }
 
   async function uninstall() {
-    if (!confirm("정말 PoB를 제거하시겠습니까?")) return;
-
+    showUninstallDialog = false;
     isLoading = true;
     error = null;
     try {
@@ -298,7 +299,7 @@
               실행
             </Button>
             <Button 
-              onclick={uninstall} 
+              onclick={() => showUninstallDialog = true} 
               disabled={isLoading || isInstalling}
               variant="ghost"
               class="text-destructive hover:text-destructive"
@@ -315,7 +316,7 @@
               실행
             </Button>
             <Button 
-              onclick={uninstall} 
+              onclick={() => showUninstallDialog = true} 
               disabled={isLoading || isInstalling}
               variant="ghost"
               class="text-destructive hover:text-destructive"
@@ -362,3 +363,21 @@
     {/if}
   </div>
 </main>
+
+<!-- Uninstall Confirmation Dialog -->
+<AlertDialog.Root bind:open={showUninstallDialog}>
+  <AlertDialog.Content>
+    <AlertDialog.Header>
+      <AlertDialog.Title>PoB 제거</AlertDialog.Title>
+      <AlertDialog.Description>
+        Path of Building을 제거하시겠습니까? 이 작업은 취소할 수 없습니다.
+      </AlertDialog.Description>
+    </AlertDialog.Header>
+    <AlertDialog.Footer>
+      <AlertDialog.Cancel>취소</AlertDialog.Cancel>
+      <AlertDialog.Action onclick={uninstall} class="bg-destructive text-white hover:bg-destructive/90">
+        제거
+      </AlertDialog.Action>
+    </AlertDialog.Footer>
+  </AlertDialog.Content>
+</AlertDialog.Root>
