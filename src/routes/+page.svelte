@@ -1,14 +1,15 @@
 <script lang="ts">
   import { commands, events, type GoogleDriveFileInfo, type PobVersion, type InstallProgress, type ErrorKind } from "@/bindings";
   import { onMount, onDestroy } from "svelte";
+  import { slide, fade } from "svelte/transition";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { Button } from "@/components/ui/button";
-  import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+  import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
   import { Badge } from "@/components/ui/badge";
   import { Progress } from "@/components/ui/progress";
   import * as Alert from "@/components/ui/alert/index.js";
   import * as AlertDialog from "@/components/ui/alert-dialog/index.js";
-   import { Package, Check, AlertCircle, RefreshCw, ExternalLink } from "@lucide/svelte";
+   import { Package, Check, AlertCircle, RefreshCw, ExternalLink, Download, CheckCircle, AlertTriangle } from "@lucide/svelte";
 
   let installedVersion = $state<PobVersion | null>(null);
   let latestVersion = $state<GoogleDriveFileInfo | null>(null);
@@ -216,6 +217,45 @@
       </Alert.Root>
     {/if}
 
+    <!-- Status Banner -->
+    {#if isUpToDate}
+      <Card class="bg-green-500/10 border-green-500/20">
+        <CardContent class="flex items-center gap-4 p-6">
+          <div class="rounded-full bg-green-500/20 p-3">
+            <CheckCircle class="h-6 w-6 text-green-500" />
+          </div>
+          <div class="space-y-1">
+            <h3 class="font-medium leading-none text-green-500">최신 버전 사용 중</h3>
+            <p class="text-sm text-muted-foreground">Path of Building이 최신 상태입니다.</p>
+          </div>
+        </CardContent>
+      </Card>
+    {:else if hasUpdate}
+      <Card class="bg-amber-500/10 border-amber-500/20">
+        <CardContent class="flex items-center gap-4 p-6">
+          <div class="rounded-full bg-amber-500/20 p-3">
+            <AlertTriangle class="h-6 w-6 text-amber-500" />
+          </div>
+          <div class="space-y-1">
+            <h3 class="font-medium leading-none text-amber-500">업데이트 가능</h3>
+            <p class="text-sm text-muted-foreground">새로운 버전({latestVersionString})이 출시되었습니다.</p>
+          </div>
+        </CardContent>
+      </Card>
+    {:else if !isInstalled}
+      <Card class="bg-muted/50">
+        <CardContent class="flex items-center gap-4 p-6">
+          <div class="rounded-full bg-background p-3">
+            <Download class="h-6 w-6 text-muted-foreground" />
+          </div>
+          <div class="space-y-1">
+            <h3 class="font-medium leading-none">설치 필요</h3>
+            <p class="text-sm text-muted-foreground">Path of Building이 설치되지 않았습니다.</p>
+          </div>
+        </CardContent>
+      </Card>
+    {/if}
+
     <!-- Version Info Card -->
     <Card>
       <CardHeader class="pb-4">
@@ -290,98 +330,98 @@
               <ExternalLink class="h-3 w-3" />
               패스 오브 엑자일 갤러리
             </Button>
-         </div>
-
-         <!-- Action Buttons -->
-        <div class="flex gap-2 pt-2">
-          {#if !isInstalled}
-            <!-- Not installed: Show Install button only -->
-            <Button
-              onclick={install}
-              disabled={isLoading || !latestVersion || isInstalling}
-              class="flex-1"
-            >
-              설치
-            </Button>
-          {:else if hasUpdate}
-            <!-- Installed with update available -->
-            <Button
-              onclick={install}
-              disabled={isLoading || !latestVersion || isInstalling}
-              class="flex-1"
-            >
-              업데이트
-            </Button>
-            <Button
-              onclick={execute}
-              disabled={isLoading || isInstalling}
-              variant="outline"
-              class="flex-1"
-            >
-              실행
-            </Button>
-            <Button
-              onclick={() => showUninstallDialog = true}
-              disabled={isLoading || isInstalling}
-              variant="ghost"
-              class="text-destructive hover:text-destructive"
-            >
-              제거
-            </Button>
-          {:else}
-            <!-- Installed and up to date -->
-            <Button
-              onclick={execute}
-              disabled={isLoading || isInstalling}
-              class="flex-1"
-            >
-              실행
-            </Button>
-            <Button
-              onclick={() => showUninstallDialog = true}
-              disabled={isLoading || isInstalling}
-              variant="ghost"
-              class="text-destructive hover:text-destructive"
-            >
-              제거
-            </Button>
-          {/if}
-        </div>
+          </div>
       </CardContent>
+      <CardFooter class="flex gap-2 justify-end">
+        {#if !isInstalled}
+          <!-- Not installed: Show Install button only -->
+          <Button 
+            onclick={install} 
+            disabled={isLoading || !latestVersion || isInstalling}
+            class="flex-1"
+          >
+            설치
+          </Button>
+        {:else if hasUpdate}
+          <!-- Installed with update available -->
+          <Button 
+            onclick={install} 
+            disabled={isLoading || !latestVersion || isInstalling}
+            class="flex-1"
+          >
+            업데이트
+          </Button>
+          <Button 
+            onclick={execute} 
+            disabled={isLoading || isInstalling}
+            variant="outline"
+            class="flex-1"
+          >
+            실행
+          </Button>
+          <Button 
+            onclick={() => showUninstallDialog = true} 
+            disabled={isLoading || isInstalling}
+            variant="ghost"
+            class="text-destructive hover:text-destructive"
+          >
+            제거
+          </Button>
+        {:else}
+          <!-- Installed and up to date -->
+          <Button 
+            onclick={execute} 
+            disabled={isLoading || isInstalling}
+            class="flex-1"
+          >
+            실행
+          </Button>
+          <Button 
+            onclick={() => showUninstallDialog = true} 
+            disabled={isLoading || isInstalling}
+            variant="ghost"
+            class="text-destructive hover:text-destructive"
+          >
+            제거
+          </Button>
+        {/if}
+      </CardFooter>
     </Card>
 
     <!-- Progress Card (only visible during installation) -->
     {#if isInstalling}
-      <Card>
-        <CardHeader class="pb-3">
-          <CardTitle class="text-base font-medium">진행 상황</CardTitle>
-        </CardHeader>
-        <CardContent class="space-y-4">
-          <div class="space-y-2">
-            <div class="flex items-center justify-between text-sm">
-              <span class="text-muted-foreground">
-                {installProgress ? getPhaseText(installProgress.phase) : "준비 중"}
-              </span>
-              <span class="font-mono">
-                {installProgress?.status === "inProgress"
-                  ? `${installProgress.percent.toFixed(0)}%`
-                  : "0%"}
-              </span>
+      <div transition:slide={{ duration: 300, axis: 'y' }}>
+        <Card>
+          <CardHeader class="pb-3">
+            <CardTitle class="text-base font-medium">진행 상황</CardTitle>
+          </CardHeader>
+          <CardContent class="space-y-4">
+            <div class="space-y-2">
+              <div class="flex items-center justify-between text-sm">
+                <span class="text-muted-foreground">
+                  {installProgress ? getPhaseText(installProgress.phase) : "준비 중"}
+                </span>
+                <span class="font-mono">
+                  {installProgress?.status === "inProgress"
+                    ? `${installProgress.percent.toFixed(0)}%`
+                    : "0%"}
+                </span>
+              </div>
+              <Progress
+                value={installProgress?.status === "inProgress" ? installProgress.percent : 0}
+                max={100}
+              />
             </div>
-            <Progress
-              value={installProgress?.status === "inProgress" ? installProgress.percent : 0}
-              max={100}
-            />
-          </div>
-          <Button
-            onclick={cancelInstall}
-            variant="outline"
-            class="w-full"
-          >
-            취소
-          </Button>
-        </CardContent>
-      </Card>
+            <Button
+              onclick={cancelInstall}
+              variant="outline"
+              class="w-full"
+            >
+              취소
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
     {/if}
   </div>
 </main>
