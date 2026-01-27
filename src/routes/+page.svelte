@@ -77,6 +77,13 @@
       fetchInstallPath()
     ]);
     isInitialLoading = false;
+
+    // Show update notification toast if update available
+    if (installedVersion && latestVersionString && installedVersion.version !== latestVersionString) {
+      toast.info("업데이트 가능", {
+        description: `새로운 버전(v${latestVersionString})이 출시되었습니다.`,
+      });
+    }
   });
 
   onDestroy(() => {

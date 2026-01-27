@@ -7,6 +7,7 @@
 	import SwordsIcon from "@lucide/svelte/icons/swords";
 	import TimerIcon from "@lucide/svelte/icons/timer";
 	import type { Component } from "svelte";
+	import { getVersion } from "@tauri-apps/api/app";
 
 	const menuItems: { title: string; url: string; icon: Component }[] = [
 		{ title: "Path of Building", url: "/", icon: PackageIcon },
@@ -14,6 +15,14 @@
 		{ title: "레벨링 가이드", url: "/guide", icon: BookOpenIcon },
 		{ title: "설정", url: "/settings", icon: SettingsIcon },
 	];
+
+	let appVersion = $state<string | null>(null);
+
+	$effect(() => {
+		getVersion().then((v) => {
+			appVersion = v;
+		});
+	});
 </script>
 
 <Sidebar.Root collapsible="icon">
@@ -61,7 +70,7 @@
 
 	<Sidebar.Footer class="p-2">
 		<div class="flex items-center justify-center text-xs text-muted-foreground">
-			<span class="group-data-[collapsible=icon]:hidden">v0.1.0</span>
+			<span class="group-data-[collapsible=icon]:hidden">v{appVersion ?? "..."}</span>
 		</div>
 	</Sidebar.Footer>
 	<Sidebar.Rail />
