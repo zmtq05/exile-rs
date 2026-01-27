@@ -71,7 +71,6 @@ pub fn run() {
                 .with_file_logging() // Enable file logging to platform log directory
                 .with_rotation(Rotation::Daily) // Rotate log files daily
                 .with_rotation_strategy(RotationStrategy::KeepSome(7)) // Keep last 7 log files
-                .with_max_file_size(MaxFileSize::mb(10)) // Rotate when file reaches 10 MB
                 .with_file(true) // Show source file in logs
                 .with_line_number(true) // Show line number in logs
                 .with_target_display(true) // Show module target in logs
