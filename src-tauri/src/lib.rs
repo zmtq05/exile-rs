@@ -5,9 +5,7 @@ pub mod util;
 use std::{path::Path, time::Duration};
 
 use tauri::Manager;
-use tauri_plugin_tracing::{
-    Builder as TracingBuilder, LevelFilter, MaxFileSize, Rotation, RotationStrategy,
-};
+use tauri_plugin_tracing::{Builder as TracingBuilder, LevelFilter, Rotation, RotationStrategy};
 use tauri_specta::{collect_commands, collect_events};
 
 use crate::pob::{
