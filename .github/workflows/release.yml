@@ -24,12 +24,12 @@ jobs:
           CARGO_VERSION=$(grep -m1 '^version' src-tauri/Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
           PKG_VERSION=$(node -p "require('./package.json').version")
           TAURI_VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
-          
+
           echo "Tag version:   $TAG_VERSION"
           echo "Cargo.toml:    $CARGO_VERSION"
           echo "package.json:  $PKG_VERSION"
           echo "tauri.conf:    $TAURI_VERSION"
-          
+
           MISMATCH=0
           if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
             echo "::error::Cargo.toml version ($CARGO_VERSION) doesn't match tag ($TAG_VERSION)"
@@ -43,14 +43,14 @@ jobs:
             echo "::error::tauri.conf.json version ($TAURI_VERSION) doesn't match tag ($TAG_VERSION)"
             MISMATCH=1
           fi
-          
+
           if [ "$MISMATCH" -eq 1 ]; then
             exit 1
           fi
           echo "✓ All versions match: $TAG_VERSION"
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
