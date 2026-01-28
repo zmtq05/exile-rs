@@ -10,7 +10,6 @@ use crate::{
         InstallCancelToken,
         google_drive::GoogleDriveFileInfo,
         manager::PobManager,
-        parallel_download::DownloadMode,
         progress::{InstallReporter, TauriProgressSink},
         version::PobVersion,
     },
@@ -60,7 +59,6 @@ pub async fn uninstall_pob(manager: State<'_, PobManager>, app: AppHandle) -> Re
 #[specta::specta]
 pub async fn install_pob(
     file_data: Option<GoogleDriveFileInfo>,
-    download_mode: DownloadMode,
     manager: State<'_, PobManager>,
     cancel_state: State<'_, InstallCancelToken>,
     app: AppHandle,
@@ -101,7 +99,6 @@ pub async fn install_pob(
         .install(
             file_info,
             temp_dir.clone(),
-            download_mode,
             cancel_token,
             reporter,
         )

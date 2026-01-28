@@ -12,7 +12,6 @@ use crate::{
     pob::{
         error::PobError,
         google_drive::{GoogleDriveClient, GoogleDriveFileInfo},
-        parallel_download::{DownloadMode, ParallelDownloadConfig, ParallelDownloader},
         progress::{InstallPhase, InstallReporter, InstallStatus},
         version::PobVersion,
     },
@@ -106,18 +105,81 @@ impl PobManager {
         &self,
         file_id: &str,
         dst: P,
-        download_mode: DownloadMode,
         cancel_token: CancellationToken,
         reporter: &InstallReporter,
     ) -> Result<(), PobError> {
-        let config = ParallelDownloadConfig {
-            mode: download_mode,
-            ..Default::default()
-        };
-        let downloader = ParallelDownloader::new(&self.client, config);
-        downloader
-            .download(file_id, dst.as_ref(), cancel_token, reporter)
-            .await
+        use tokio::io::{AsyncWriteExt, BufWriter};
+        use futures_util::StreamExt;
+
+        let res = self.client.get_file(file_id).await?;
+        let total_size = res.content_length().unwrap_or(0);
+
+        let f = tokio::fs::File::create(dst.as_ref()).await?;
+        if total_size > 0
+            && let Err(e) = f.set_len(total_size).await
+        {
+            tracing::warn!(
+                phase = "download",
+                error = %e,
+                "Failed to preallocate file size"
+            );
+        }
+
+        reporter.report(
+            InstallPhase::Downloading,
+            InstallStatus::Started {
+                total_size: NonZeroU32::new(total_size as u32),
+            },
+        );
+
+        let start = Instant::now();
+        let mut stream = res.bytes_stream();
+        let mut writer = BufWriter::with_capacity(64 * 1024, f);
+
+        let mut downloaded: u64 = 0;
+        let mut last_report = start;
+
+        loop {
+            tokio::select! {
+                _ = cancel_token.cancelled() => {
+                    tracing::info!(phase = "download", "Download cancelled");
+                    reporter.report(InstallPhase::Downloading, InstallStatus::Cancelled);
+                    drop(writer);
+                    tokio::fs::remove_file(dst.as_ref()).await.ok();
+                    return Err(PobError::Cancelled);
+                }
+                chunk = stream.next() => {
+                    match chunk {
+                        Some(Ok(bytes)) => {
+                            writer.write_all(&bytes).await?;
+                            downloaded += bytes.len() as u64;
+
+                            if last_report.elapsed().as_millis() < 100 {
+                                continue;
+                            }
+                            let percent = if total_size > 0 {
+                                downloaded as f64 / total_size as f64 * 100.0
+                            } else {
+                                0.0
+                            };
+                            reporter.report(InstallPhase::Downloading, InstallStatus::InProgress { percent });
+                            last_report = Instant::now();
+                        }
+                        Some(Err(e)) => {
+                            tracing::error!(phase = "download", error = %e, "Error while downloading");
+                            reporter.report(InstallPhase::Downloading, InstallStatus::Failed { reason: e.to_string() });
+                            return Err(PobError::DownloadFailed(e.to_string()));
+                        }
+                        None => {
+                            writer.flush().await?;
+                            tracing::info!(phase = "download", elapsed = ?start.elapsed(), "Download completed");
+                            reporter.report(InstallPhase::Downloading, InstallStatus::Completed);
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+        }
     }
 
     pub(crate) async fn extract_with_progress<P: AsRef<std::path::Path>>(
@@ -509,7 +571,6 @@ impl PobManager {
         &self,
         file_info: GoogleDriveFileInfo,
         temp_dir: PathBuf,
-        download_mode: DownloadMode,
         cancel_token: CancellationToken,
         reporter: InstallReporter,
     ) -> Result<(), PobError> {
@@ -534,7 +595,6 @@ impl PobManager {
             .download_with_progress(
                 &file_info.id,
                 &temp_zip_path,
-                download_mode,
                 cancel_token.clone(),
                 &reporter,
             )

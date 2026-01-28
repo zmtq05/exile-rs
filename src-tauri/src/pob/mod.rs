@@ -7,7 +7,6 @@ pub mod version;
 pub mod error;
 pub mod google_drive;
 pub mod manager;
-pub mod parallel_download;
 pub mod progress;
 
 /// Holds the active installation's cancellation token (if any).

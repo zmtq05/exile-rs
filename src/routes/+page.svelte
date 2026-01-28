@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { commands, events, type GoogleDriveFileInfo, type PobVersion, type InstallProgress, type ErrorKind, type DownloadMode } from "@/bindings";
+  import { commands, events, type GoogleDriveFileInfo, type PobVersion, type InstallProgress, type ErrorKind } from "@/bindings";
   import { onMount, onDestroy } from "svelte";
   import { slide } from "svelte/transition";
   import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -11,8 +11,7 @@
   import { Skeleton } from "@/components/ui/skeleton";
   import * as Alert from "@/components/ui/alert/index.js";
   import * as AlertDialog from "@/components/ui/alert-dialog/index.js";
-  import * as ToggleGroup from "@/components/ui/toggle-group/index.js";
-  import { Package, Check, AlertCircle, RefreshCw, ExternalLink, Download, CheckCircle, AlertTriangle, FolderOpen, Settings } from "@lucide/svelte";
+  import { Package, Check, AlertCircle, RefreshCw, ExternalLink, Download, CheckCircle, AlertTriangle, FolderOpen } from "@lucide/svelte";
 
   let installedVersion = $state<PobVersion | null>(null);
   let latestVersion = $state<GoogleDriveFileInfo | null>(null);
@@ -24,14 +23,6 @@
   let error = $state<{ kind: string; message?: string } | null>(null);
   let installProgress = $state<InstallProgress | null>(null);
   let showUninstallDialog = $state(false);
-  let downloadMode = $state<DownloadMode>(
-    (localStorage.getItem("downloadMode") as DownloadMode) || "auto"
-  );
-
-  function setDownloadMode(mode: DownloadMode) {
-    downloadMode = mode;
-    localStorage.setItem("downloadMode", mode);
-  }
 
   let unlistenInstallProgress: (() => void) | null = null;
 
@@ -156,7 +147,7 @@
     error = null;
     installProgress = null;
     try {
-      const result = await commands.installPob(latestVersion, downloadMode);
+      const result = await commands.installPob(latestVersion);
       if (result.status === "error") {
         handleError(result.error, "설치 실패");
         installProgress = null;
@@ -420,25 +411,6 @@
               <ExternalLink class="h-3 w-3" />
               패스 오브 엑자일 갤러리
             </Button>
-          </div>
-
-          <!-- Download Mode Row -->
-          <div class="flex items-center justify-between">
-            <span class="text-sm text-muted-foreground flex items-center gap-1">
-              <Settings class="h-3 w-3" />
-              다운로드 방식
-            </span>
-            <ToggleGroup.Root
-              type="single"
-              value={downloadMode}
-              onValueChange={(value) => value && setDownloadMode(value as DownloadMode)}
-              variant="outline"
-              size="sm"
-            >
-              <ToggleGroup.Item value="auto" class="h-7 px-2 text-xs">자동</ToggleGroup.Item>
-              <ToggleGroup.Item value="parallel" class="h-7 px-2 text-xs">병렬</ToggleGroup.Item>
-              <ToggleGroup.Item value="single" class="h-7 px-2 text-xs">단일</ToggleGroup.Item>
-            </ToggleGroup.Root>
           </div>
         </CardContent>
         <CardFooter class="flex gap-2 justify-end">
