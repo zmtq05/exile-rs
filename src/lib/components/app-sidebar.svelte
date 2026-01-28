@@ -1,18 +1,14 @@
 <script lang="ts">
 	import { page } from "$app/stores";
 	import * as Sidebar from "@/components/ui/sidebar";
-	import BookOpenIcon from "@lucide/svelte/icons/book-open";
 	import PackageIcon from "@lucide/svelte/icons/package";
 	import SettingsIcon from "@lucide/svelte/icons/settings";
 	import SwordsIcon from "@lucide/svelte/icons/swords";
-	import TimerIcon from "@lucide/svelte/icons/timer";
 	import type { Component } from "svelte";
 	import { getVersion } from "@tauri-apps/api/app";
 
 	const menuItems: { title: string; url: string; icon: Component }[] = [
-		{ title: "Path of Building", url: "/", icon: PackageIcon },
-		{ title: "타이머", url: "/timer", icon: TimerIcon },
-		{ title: "레벨링 가이드", url: "/guide", icon: BookOpenIcon },
+		{ title: "한글 POB", url: "/", icon: PackageIcon },
 		{ title: "설정", url: "/settings", icon: SettingsIcon },
 	];
 
