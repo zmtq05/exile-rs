@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { page } from "$app/stores";
+	import { page } from "$app/state";
 	import * as Sidebar from "@/components/ui/sidebar";
 	import PackageIcon from "@lucide/svelte/icons/package";
 	import SettingsIcon from "@lucide/svelte/icons/settings";
@@ -49,7 +49,7 @@
 				<Sidebar.Menu>
 					{#each menuItems as item (item.title)}
 						<Sidebar.MenuItem>
-							<Sidebar.MenuButton isActive={item.url === "/" ? $page.url.pathname === "/" : $page.url.pathname.startsWith(item.url)} tooltipContent={item.title}>
+							<Sidebar.MenuButton isActive={item.url === "/" ? page.url.pathname === "/" : page.url.pathname.startsWith(item.url)} tooltipContent={item.title}>
 								{#snippet child({ props })}
 									<a href={item.url} {...props}>
 										<item.icon />
