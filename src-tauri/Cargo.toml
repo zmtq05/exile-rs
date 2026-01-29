@@ -46,3 +46,7 @@ pin-project-lite = "0.2.16"
 scraper = "0.25.0"
 scopeguard = "1.2"
 sysinfo = "0.38.0"
+
+[dev-dependencies]
+tempfile = "3.15"
+

@@ -106,7 +106,7 @@ impl PobManager {
 
     pub fn is_pob_running(&self) -> bool {
         use sysinfo::System;
-        
+
         let mut sys = System::new();
         sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
         let exe_path = self.exe_path();

@@ -153,3 +153,179 @@ fn test_dummy() {
 
     println!("{}", serde_json::to_string_pretty(&p).unwrap());
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex as StdMutex};
+
+    /// Mock ProgressSink for testing - captures all emitted progress
+    struct MockProgressSink {
+        events: Arc<StdMutex<Vec<InstallProgress>>>,
+    }
+
+    impl MockProgressSink {
+        fn new() -> Self {
+            Self {
+                events: Arc::new(StdMutex::new(Vec::new())),
+            }
+        }
+
+        fn get_events(&self) -> Vec<InstallProgress> {
+            self.events.lock().unwrap().clone()
+        }
+
+        #[allow(dead_code)]
+        fn event_count(&self) -> usize {
+            self.events.lock().unwrap().len()
+        }
+    }
+
+    impl ProgressSink for MockProgressSink {
+        fn emit(&self, progress: InstallProgress) {
+            self.events.lock().unwrap().push(progress);
+        }
+    }
+
+    #[test]
+    fn test_install_reporter_basic() {
+        let sink = Arc::new(MockProgressSink::new());
+        let reporter = InstallReporter::new("test_task", sink.clone());
+
+        assert_eq!(reporter.task_id(), "test_task");
+
+        reporter.report(
+            InstallPhase::Downloading,
+            InstallStatus::Started { total_size: None },
+        );
+
+        let events = sink.get_events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].task_id, "test_task");
+        assert!(matches!(events[0].phase, InstallPhase::Downloading));
+    }
+
+    #[test]
+    fn test_install_reporter_multiple_phases() {
+        let sink = Arc::new(MockProgressSink::new());
+        let reporter = InstallReporter::new("multi_phase", sink.clone());
+
+        reporter.report(
+            InstallPhase::Downloading,
+            InstallStatus::Started { total_size: None },
+        );
+        reporter.report(
+            InstallPhase::Downloading,
+            InstallStatus::InProgress { percent: 50.0 },
+        );
+        reporter.report(InstallPhase::Downloading, InstallStatus::Completed);
+        reporter.report(
+            InstallPhase::Extracting,
+            InstallStatus::Started { total_size: None },
+        );
+
+        let events = sink.get_events();
+        assert_eq!(events.len(), 4);
+
+        // Verify phase transitions
+        assert!(matches!(events[0].phase, InstallPhase::Downloading));
+        assert!(matches!(events[0].status, InstallStatus::Started { .. }));
+        assert!(matches!(events[1].status, InstallStatus::InProgress { .. }));
+        assert!(matches!(events[2].status, InstallStatus::Completed));
+        assert!(matches!(events[3].phase, InstallPhase::Extracting));
+    }
+
+    #[test]
+    fn test_install_reporter_clone() {
+        let sink = Arc::new(MockProgressSink::new());
+        let reporter = InstallReporter::new("clone_test", sink.clone());
+        let reporter_clone = reporter.clone();
+
+        reporter.report(
+            InstallPhase::Downloading,
+            InstallStatus::Started { total_size: None },
+        );
+        reporter_clone.report(InstallPhase::Downloading, InstallStatus::Completed);
+
+        let events = sink.get_events();
+        assert_eq!(events.len(), 2);
+    }
+
+    #[test]
+    fn test_install_progress_serialization() {
+        let progress = InstallProgress {
+            task_id: "ser_test".to_string(),
+            phase: InstallPhase::Moving,
+            status: InstallStatus::InProgress { percent: 75.5 },
+        };
+
+        let json = serde_json::to_value(&progress).unwrap();
+        assert_eq!(json["taskId"], "ser_test");
+        assert_eq!(json["phase"], "moving");
+        assert_eq!(json["status"], "inProgress");
+        assert_eq!(json["percent"], 75.5);
+    }
+
+    #[test]
+    fn test_install_status_variants() {
+        let test_cases = vec![
+            (
+                InstallStatus::Started {
+                    total_size: NonZeroU32::new(1000),
+                },
+                "started",
+            ),
+            (InstallStatus::InProgress { percent: 42.0 }, "inProgress"),
+            (InstallStatus::Completed, "completed"),
+            (
+                InstallStatus::Failed {
+                    reason: "test error".to_string(),
+                },
+                "failed",
+            ),
+            (InstallStatus::Cancelled, "cancelled"),
+        ];
+
+        for (status, expected_tag) in test_cases {
+            let progress = InstallProgress {
+                task_id: "status_test".to_string(),
+                phase: InstallPhase::Preparing,
+                status,
+            };
+
+            let json = serde_json::to_value(&progress).unwrap();
+            assert_eq!(json["status"], expected_tag);
+        }
+    }
+
+    #[test]
+    fn test_install_phase_serialization() {
+        let phases = vec![
+            (InstallPhase::Downloading, "downloading"),
+            (InstallPhase::Extracting, "extracting"),
+            (InstallPhase::BackingUp, "backingUp"),
+            (InstallPhase::Moving, "moving"),
+            (InstallPhase::Restoring, "restoring"),
+            (InstallPhase::Finalizing, "finalizing"),
+            (InstallPhase::Uninstalling, "uninstalling"),
+            (InstallPhase::Preparing, "preparing"),
+        ];
+
+        for (phase, expected) in phases {
+            let progress = InstallProgress {
+                task_id: "phase_test".to_string(),
+                phase,
+                status: InstallStatus::Completed,
+            };
+
+            let json = serde_json::to_value(&progress).unwrap();
+            assert_eq!(json["phase"], expected);
+        }
+    }
+
+    #[test]
+    fn test_progress_throttle_constant() {
+        // Verify constant is set
+        assert_eq!(PROGRESS_THROTTLE_MS, 100);
+    }
+}
