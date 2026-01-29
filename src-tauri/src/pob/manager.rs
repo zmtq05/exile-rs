@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     num::NonZeroU32,
     path::{Path, PathBuf},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use tokio::{fs, sync::Mutex, sync::RwLock};
@@ -17,6 +17,9 @@ use crate::{
     },
     util::{async_copy_dir_recursive, datetime_to_systemtime},
 };
+
+/// Progress report throttling interval in milliseconds
+const PROGRESS_REPORT_INTERVAL_MS: u64 = 100;
 
 pub struct PobManager {
     client: GoogleDriveClient,
@@ -101,6 +104,17 @@ impl PobManager {
         Ok(Some(installed))
     }
 
+    pub fn is_pob_running(&self) -> bool {
+        use sysinfo::System;
+        
+        let mut sys = System::new();
+        sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+        let exe_path = self.exe_path();
+        let exe_name = exe_path.file_name().unwrap();
+
+        sys.processes_by_exact_name(exe_name).next().is_some()
+    }
+
     pub(crate) async fn download_with_progress<P: AsRef<std::path::Path>>(
         &self,
         file_id: &str,
@@ -156,7 +170,7 @@ impl PobManager {
                             writer.write_all(&bytes).await?;
                             downloaded += bytes.len() as u64;
 
-                            if last_report.elapsed().as_millis() < 100 {
+                            if last_report.elapsed() < Duration::from_millis(PROGRESS_REPORT_INTERVAL_MS) {
                                 continue;
                             }
                             let percent = if total_size > 0 {
@@ -276,7 +290,7 @@ impl PobManager {
                     }
                 }
 
-                if last_report.elapsed().as_millis() < 100 {
+                if last_report.elapsed() < Duration::from_millis(PROGRESS_REPORT_INTERVAL_MS) {
                     continue;
                 }
                 let percent = (i + 1) as f64 / file_count as f64 * 100.0;
@@ -576,6 +590,10 @@ impl PobManager {
         cancel_token: CancellationToken,
         reporter: InstallReporter,
     ) -> Result<(), PobError> {
+        if self.is_pob_running() {
+            return Err(PobError::ProcessRunning);
+        }
+
         tracing::info!("=== INSTALL START ===");
 
         let install_path = self.install_path();
@@ -689,16 +707,20 @@ impl PobManager {
 
         // 5. Restore user data
         tracing::info!(phase = "restore", "Starting restore phase");
-        if let Err(e) = self.restore(reporter).await {
-            tracing::error!(phase = "restore", error = %e, "Failed to restore user data after swap");
-            reporter.report(
-                InstallPhase::Restoring,
-                InstallStatus::Failed {
-                    reason: format!("백업 복원 실패: {}. 백업 폴더를 확인해주세요.", e),
-                },
-            );
+        match self.restore(reporter).await {
+            Ok(()) => {
+                tracing::info!(phase = "restore", "Restore completed successfully");
+            }
+            Err(e) => {
+                tracing::error!(phase = "restore", error = %e, "Failed to restore user data after swap");
+                reporter.report(
+                    InstallPhase::Restoring,
+                    InstallStatus::Failed {
+                        reason: format!("백업 복원 실패: {}. 백업 폴더를 확인해주세요.", e),
+                    },
+                );
+            }
         }
-        tracing::info!(phase = "restore", "Restore completed");
 
         // 6. Save version info
         tracing::info!(phase = "finalize", "Saving version info");
@@ -778,6 +800,10 @@ impl PobManager {
 
     /// Uninstall PoB - removes the installation directory
     pub async fn uninstall(&self, reporter: &InstallReporter) -> Result<(), PobError> {
+        if self.is_pob_running() {
+            return Err(PobError::ProcessRunning);
+        }
+
         let path = self.install_path();
 
         if path.exists() {
