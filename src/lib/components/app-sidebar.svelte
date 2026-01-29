@@ -32,8 +32,8 @@
 								<SwordsIcon class="size-4" />
 							</div>
 							<div class="grid flex-1 text-left text-sm leading-tight">
-								<span class="truncate font-semibold">Exile Manager</span>
-								<span class="truncate text-xs text-muted-foreground">Desktop App</span>
+								<span class="truncate font-semibold">exile-rs</span>
+								<!-- <span class="truncate text-xs text-muted-foreground">Desktop App</span> -->
 							</div>
 						</a>
 					{/snippet}
