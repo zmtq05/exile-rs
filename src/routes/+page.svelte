@@ -191,11 +191,16 @@
   });
 
   // 설치 진행 상태 변화 감지 ($effect로 side effect 분리)
+  let lastCompletedTaskId = $state<string | null>(null);
+  
   $effect(() => {
     if (!installProgress) return;
 
-    const { status } = installProgress;
-    if (status === "completed") {
+    const { status, taskId } = installProgress;
+    
+    // 이미 처리한 completed 이벤트는 무시
+    if (status === "completed" && taskId !== lastCompletedTaskId) {
+      lastCompletedTaskId = taskId;
       toast.success("설치 완료", {
         description: "Path of Building이 성공적으로 설치되었습니다.",
       });
