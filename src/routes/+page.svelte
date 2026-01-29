@@ -473,7 +473,7 @@
           <div class="flex items-center justify-between mb-6">
             <h3 class="font-semibold text-foreground flex items-center gap-2">
               <BookOpen size={18} class="text-muted-foreground" />
-              상세 정보
+              관리
             </h3>
             <Button
               onclick={() => checkLatestVersion(true)}
@@ -538,23 +538,22 @@
           <div class="grid grid-cols-2 gap-3">
             {#each QUICK_LINKS as link (link.url)}
               {@const LinkIcon = link.icon}
-              <Button
-                variant="outline"
+              <button
                 onclick={() => openExternalLink(link.url)}
-                class={`flex flex-col items-start p-4 h-auto ${link.bg} border transition-all hover:scale-[1.02] active:scale-[0.98]`}
+                class={`flex flex-col items-start p-4 h-auto rounded-md ${link.bg} border transition-all hover:scale-[1.02] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2`}
               >
                 <div class={`mb-2 ${link.color}`}>
                   <LinkIcon size={20} />
                 </div>
                 <div
-                  class="font-semibold text-foreground text-sm truncate w-full"
+                  class="font-semibold text-foreground text-sm truncate w-full text-left"
                 >
                   {link.title}
                 </div>
-                <div class="text-xs text-muted-foreground truncate w-full">
+                <div class="text-xs text-muted-foreground truncate w-full text-left">
                   {link.desc}
                 </div>
-              </Button>
+              </button>
             {/each}
           </div>
         </CardContent>
