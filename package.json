@@ -1,7 +1,7 @@
 {
   "name": "exile-rs",
   "version": "0.1.0",
-  "description": "",
+  "description": "A desktop application for managing Path of Exile tools and utilities",
   "type": "module",
   "scripts": {
     "dev": "vite dev",

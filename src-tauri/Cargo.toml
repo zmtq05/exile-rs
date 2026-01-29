@@ -1,8 +1,8 @@
 [package]
 name = "exile-rs"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+description = "A desktop application for managing Path of Exile tools and utilities"
+authors = ["zmtq05"]
 edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

@@ -7,6 +7,26 @@ A desktop application for managing Path of Exile tools and utilities.
 - **PoB Manager**: Install and manage [Korean Path of Building](https://gall.dcinside.com/mgallery/board/view/?id=pathofexile&no=991032)
 - **Version Control**: Automatically detect and manage different PoB versions
 
+## Screenshots
+
+<p align="center">
+  <img src="screenshots/pob1.png" alt="Main Screen" width="800">
+  <br>
+  <em>Main Screen</em>
+</p>
+
+<p align="center">
+  <img src="screenshots/pob2.png" alt="Installation Progress" width="800">
+  <br>
+  <em>Installation Progress</em>
+</p>
+
+<p align="center">
+  <img src="screenshots/pob3.png" alt="Installed" width="800">
+  <br>
+  <em>Installed</em>
+</p>
+
 ## Download
 
 Download the latest release from the [Releases](../../releases) page.
