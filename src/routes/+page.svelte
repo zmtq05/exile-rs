@@ -14,6 +14,7 @@
   import { Card, CardContent } from "@/components/ui/card";
   import { Badge } from "@/components/ui/badge";
   import { Progress } from "@/components/ui/progress";
+  import { Skeleton } from "@/components/ui/skeleton";
   import * as AlertDialog from "@/components/ui/alert-dialog/index.js";
   import { Alert } from "@/components/ui/alert";
   import * as AlertComp from "@/components/ui/alert";
@@ -44,6 +45,7 @@
   let latestVersion = $state<GoogleDriveFileInfo | null>(null);
   let latestVersionString = $state<string | null>(null);
   let installPath = $state<string | null>(null);
+  let isInitialLoading = $state(true);
   let isFetchingLatest = $state(false);
   let installProgress = $state<InstallProgress | null>(null);
   let error = $state<{ kind: string; message?: string } | null>(null);
@@ -177,6 +179,7 @@
         fetchInstallPath(),
       ]);
 
+      isInitialLoading = false;
       return unlisten;
     };
 
@@ -370,6 +373,25 @@
     {/if}
 
     <!-- Hero Section: Status & Main Action -->
+    {#if isInitialLoading}
+      <!-- Loading Skeleton -->
+      <Card class="relative border-border shadow-2xl">
+        <CardContent class="p-8">
+          <div class="space-y-6">
+            <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+              <div class="space-y-3 flex-1">
+                <Skeleton class="h-8 w-48" />
+                <Skeleton class="h-4 w-64" />
+              </div>
+              <div class="flex gap-3">
+                <Skeleton class="h-11 w-24" />
+                <Skeleton class="h-11 w-24" />
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    {:else}
     <div class="relative group">
       <!-- Background Glow -->
       <div
@@ -486,6 +508,7 @@
         </CardContent>
       </Card>
     </div>
+    {/if}
 
     <!-- Info Grid Section -->
     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -504,11 +527,13 @@
               disabled={isFetchingLatest}
               class="text-xs"
             >
-              <RefreshCw
-                size={14}
-                class={isFetchingLatest ? "animate-spin" : ""}
-              />
-              업데이트 확인
+              {#if isFetchingLatest}
+                <RefreshCw size={14} class="animate-spin mr-1" />
+                확인 중...
+              {:else}
+                <RefreshCw size={14} class="mr-1" />
+                업데이트 확인
+              {/if}
             </Button>
           </div>
 
