@@ -192,12 +192,12 @@
 
   // 설치 진행 상태 변화 감지 ($effect로 side effect 분리)
   let lastCompletedTaskId = $state<string | null>(null);
-  
+
   $effect(() => {
     if (!installProgress) return;
 
     const { status, taskId } = installProgress;
-    
+
     // 이미 처리한 completed 이벤트는 무시
     if (status === "completed" && taskId !== lastCompletedTaskId) {
       lastCompletedTaskId = taskId;
