@@ -108,8 +108,8 @@ impl PobManager {
         cancel_token: CancellationToken,
         reporter: &InstallReporter,
     ) -> Result<(), PobError> {
-        use tokio::io::{AsyncWriteExt, BufWriter};
         use futures_util::StreamExt;
+        use tokio::io::{AsyncWriteExt, BufWriter};
 
         let res = self.client.get_file(file_id).await?;
         let total_size = res.content_length().unwrap_or(0);

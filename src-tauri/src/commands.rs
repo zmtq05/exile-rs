@@ -96,12 +96,7 @@ pub async fn install_pob(
 
     // Execute install with guaranteed temp cleanup
     let result = manager
-        .install(
-            file_info,
-            temp_dir.clone(),
-            cancel_token,
-            reporter,
-        )
+        .install(file_info, temp_dir.clone(), cancel_token, reporter)
         .await;
 
     // Issue 4: Always cleanup temp subdirectory
