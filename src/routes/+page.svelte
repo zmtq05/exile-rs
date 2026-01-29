@@ -364,7 +364,7 @@
             <div class="space-y-2">
               <div class="flex items-center gap-3">
                 <h2 class="text-2xl font-bold text-foreground tracking-tight">
-                  Path of Building
+                  한글 POB
                 </h2>
                 <Badge
                   variant="outline"
@@ -469,7 +469,7 @@
     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
       <!-- Details Card -->
       <Card class="border-border flex flex-col justify-between">
-        <CardContent class="p-6">
+        <CardContent>
           <div class="flex items-center justify-between mb-6">
             <h3 class="font-semibold text-foreground flex items-center gap-2">
               <BookOpen size={18} class="text-muted-foreground" />
@@ -497,7 +497,7 @@
               disabled={!isInstalled}
               class="w-full justify-start gap-2"
             >
-              <FolderOpen size={16} /> 폴더 열기
+              <FolderOpen size={16} /> 설치 폴더 열기
             </Button>
 
             <Button
@@ -505,7 +505,8 @@
               onclick={openSource}
               class="w-full justify-start gap-2"
             >
-              <ExternalLink size={16} /> 패스 오브 엑자일 갤러리
+              <ExternalLink size={16} />
+              <span class="truncate">POE1&2 한글 POB - 패스 오브 엑자일 갤러리</span>
             </Button>
           </div>
 
@@ -527,7 +528,7 @@
 
       <!-- Quick Links Section -->
       <Card class="border-border flex flex-col">
-        <CardContent class="p-6">
+        <CardContent>
           <h3
             class="font-semibold text-foreground mb-4 flex items-center gap-2"
           >
@@ -568,7 +569,7 @@
     <AlertDialog.Header>
       <AlertDialog.Title>PoB 제거</AlertDialog.Title>
       <AlertDialog.Description>
-        Path of Building을 제거하시겠습니까? 이 작업은 취소할 수 없습니다.
+        제거하시겠습니까? 이 작업은 취소할 수 없습니다.
       </AlertDialog.Description>
     </AlertDialog.Header>
     <AlertDialog.Footer>
