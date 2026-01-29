@@ -122,6 +122,7 @@
   const StatusIcon = $derived(statusConfig.icon);
 
   const PHASE_TEXT: Record<string, string> = {
+    preparing: "준비 중",
     downloading: "다운로드 중",
     extracting: "압축 해제 중",
     backingUp: "백업 중",
