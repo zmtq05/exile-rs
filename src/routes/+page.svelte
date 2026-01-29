@@ -15,6 +15,8 @@
   import { Badge } from "@/components/ui/badge";
   import { Progress } from "@/components/ui/progress";
   import * as AlertDialog from "@/components/ui/alert-dialog/index.js";
+  import { Alert } from "@/components/ui/alert";
+  import * as AlertComp from "@/components/ui/alert";
   import {
     Play,
     Download,
@@ -28,6 +30,7 @@
     Coins,
     Hammer,
     Globe,
+    AlertCircle,
     type Icon,
     CircleCheck,
     CircleAlert,
@@ -347,6 +350,25 @@
 
 <div class="flex-1 p-4 md:p-6 overflow-y-auto flex justify-center items-start">
   <div class="w-full max-w-4xl mx-auto space-y-6">
+    <!-- Error Banner -->
+    {#if error && error.kind !== 'cancelled'}
+      <Alert variant="destructive" class="relative">
+        <AlertCircle class="h-4 w-4" />
+        <AlertComp.AlertTitle>오류 발생</AlertComp.AlertTitle>
+        <AlertComp.AlertDescription>
+          {error.message || '알 수 없는 오류가 발생했습니다.'}
+        </AlertComp.AlertDescription>
+        <Button
+          variant="ghost"
+          size="sm"
+          onclick={() => error = null}
+          class="absolute top-2 right-2 h-6 w-6 p-0"
+        >
+          <X size={14} />
+        </Button>
+      </Alert>
+    {/if}
+
     <!-- Hero Section: Status & Main Action -->
     <div class="relative group">
       <!-- Background Glow -->
