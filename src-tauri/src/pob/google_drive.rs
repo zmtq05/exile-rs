@@ -41,7 +41,20 @@ impl GoogleDriveClient {
 
         let body = res.text().await?;
 
-        Ok(html_parser::parse_google_drive_folder_html(&body))
+        let files = html_parser::parse_google_drive_folder_html(&body);
+
+        if files.is_empty() {
+            tracing::error!(
+                folder_id = %folder_id,
+                html_sample = &body[..body.len().min(500)],
+                "No files found in Google Drive folder or failed to parse HTML - Google Drive UI may have changed"
+            );
+
+            return Err(PobError::NotFoundFromDrive(
+                "Google Drive 폴더에서 파일을 찾을 수 없거나 HTML 파싱에 실패했습니다".to_string(),
+            ));
+        }
+        Ok(files)
     }
 
     pub async fn find_latest(
