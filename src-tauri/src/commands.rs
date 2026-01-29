@@ -72,7 +72,10 @@ pub async fn install_pob(
 
     // Create reporter
     let reporter = InstallReporter::new(&task_id, Arc::new(TauriProgressSink::new(app.clone())));
-    reporter.report(InstallPhase::Preparing, InstallStatus::Started { total_size: None });
+    reporter.report(
+        InstallPhase::Preparing,
+        InstallStatus::Started { total_size: None },
+    );
 
     // Issue 1: Store cancellation token in managed state (no event listener)
     let cancel_token = CancellationToken::new();
