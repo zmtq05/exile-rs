@@ -10,7 +10,7 @@ use crate::{
         InstallCancelToken,
         google_drive::GoogleDriveFileInfo,
         manager::PobManager,
-        progress::{InstallReporter, TauriProgressSink},
+        progress::{InstallPhase, InstallReporter, InstallStatus, TauriProgressSink},
         version::PobVersion,
     },
     util::generate_task_id,
@@ -68,6 +68,12 @@ pub async fn install_pob(
         .try_write_lock()
         .ok_or_else(|| ErrorKind::Conflict("이미 다른 설치 작업이 진행 중입니다.".into()))?;
 
+    let task_id = generate_task_id("pob");
+
+    // Create reporter
+    let reporter = InstallReporter::new(&task_id, Arc::new(TauriProgressSink::new(app.clone())));
+    reporter.report(InstallPhase::Preparing, InstallStatus::Started { total_size: None });
+
     // Issue 1: Store cancellation token in managed state (no event listener)
     let cancel_token = CancellationToken::new();
     cancel_state.set(cancel_token.clone());
@@ -84,15 +90,11 @@ pub async fn install_pob(
     };
 
     // Issue 4: Create isolated per-task temp directory
-    let task_id = generate_task_id("pob");
     let base_temp = app.path().temp_dir()?;
     let temp_dir = base_temp.join(&task_id);
     tokio::fs::create_dir_all(&temp_dir)
         .await
         .map_err(|e| ErrorKind::Io(format!("임시 디렉토리 생성 실패: {}", e)))?;
-
-    // Create reporter
-    let reporter = InstallReporter::new(&task_id, Arc::new(TauriProgressSink::new(app)));
 
     // Execute install with guaranteed temp cleanup
     let result = manager

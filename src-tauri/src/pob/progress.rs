@@ -138,6 +138,7 @@ pub enum InstallPhase {
     Restoring,
     Finalizing,
     Uninstalling,
+    Preparing,
 }
 
 #[test]

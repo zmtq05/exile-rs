@@ -116,7 +116,7 @@ export type ErrorKind =
  */
 { kind: "domain"; message: string }
 export type GoogleDriveFileInfo = { id: string; name: string; isFolder: boolean }
-export type InstallPhase = "downloading" | "extracting" | "backingUp" | "moving" | "restoring" | "finalizing" | "uninstalling"
+export type InstallPhase = "downloading" | "extracting" | "backingUp" | "moving" | "restoring" | "finalizing" | "uninstalling" | "preparing"
 export type InstallProgress = ({ status: "started"; total_size?: number | null } | { status: "inProgress"; percent: number } | { status: "completed" } | { status: "failed"; reason: string } | { status: "cancelled" }) & { taskId: string; phase: InstallPhase }
 export type PobVersion = { version: string; installedAt: string; fileId: string }
 
