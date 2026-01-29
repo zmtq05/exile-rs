@@ -96,17 +96,17 @@
 
   const STATUS_CONFIGS: Record<typeof appStatus, StatusConfig> = {
     idle: {
-      color: "bg-green-500/10 text-green-400 border-green-500/20",
+      color: "bg-success/10 text-success border-success/20",
       icon: CircleCheck,
       text: "최신 버전",
     },
     update_available: {
-      color: "bg-orange-500/10 text-orange-400 border-orange-500/20",
+      color: "bg-warning/10 text-warning border-warning/20",
       icon: CircleAlert,
       text: "업데이트 가능",
     },
     updating: {
-      color: "bg-blue-500/10 text-blue-400 border-blue-500/20",
+      color: "bg-info/10 text-info border-info/20",
       icon: RefreshCw,
       text: "업데이트 중...",
       animate: "animate-spin",
@@ -495,14 +495,20 @@
               <div
                 class="flex justify-between text-xs font-medium text-muted-foreground"
               >
-                <span class="text-blue-400">
+                <span class="text-info">
                   {installProgress
                     ? getPhaseText(installProgress.phase)
                     : "다운로드 중..."}
                 </span>
                 <span>{progress.toFixed(0)}%</span>
               </div>
-              <Progress value={progress} max={100} class="h-2" />
+              <div class="relative">
+                <Progress value={progress} max={100} class="h-2" />
+                <!-- Shimmer effect -->
+                <div class="absolute inset-0 overflow-hidden rounded-full">
+                  <div class="h-full w-1/2 bg-gradient-to-r from-transparent via-white/10 to-transparent animate-shimmer"></div>
+                </div>
+              </div>
             </div>
           {/if}
         </CardContent>
