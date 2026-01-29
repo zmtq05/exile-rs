@@ -687,7 +687,15 @@ impl PobManager {
 
         // 5. Restore user data
         tracing::info!(phase = "restore", "Starting restore phase");
-        self.restore(reporter).await?;
+        if let Err(e) = self.restore(reporter).await {
+            tracing::error!(phase = "restore", error = %e, "Failed to restore user data after swap");
+            reporter.report(
+                InstallPhase::Restoring,
+                InstallStatus::Failed {
+                    reason: format!("백업 복원 실패: {}. 백업 폴더를 확인해주세요.", e),
+                },
+            );
+        }
         tracing::info!(phase = "restore", "Restore completed");
 
         // 6. Save version info
