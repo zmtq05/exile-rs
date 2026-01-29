@@ -1,28 +1,37 @@
 <script lang="ts">
   import { commands } from "@/bindings";
-  import { onMount } from "svelte";
   import { revealItemInDir } from "@tauri-apps/plugin-opener";
   import { getVersion } from "@tauri-apps/api/app";
   import { toast } from "svelte-sonner";
   import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
   import { Button } from "@/components/ui/button";
-  import { Settings, FolderOpen } from "@lucide/svelte";
+  import { Switch } from "@/components/ui/switch";
+  import { Label } from "@/components/ui/label";
+  import { Settings, RefreshCw } from "@lucide/svelte";
+  import {
+    loadSettings,
+    getSettings,
+    setAutoCheckUpdate,
+  } from "@/stores/settings.svelte";
+  import {
+    checkForUpdate,
+    getUpdateState,
+  } from "@/stores/updater.svelte";
+  import UpdateDialog from "@/components/update-dialog.svelte";
+    import { onMount } from "svelte";
 
   let installPath = $state<string | null>(null);
   let appVersion = $state<string | null>(null);
   let isLoading = $state(true);
+  let updateDialogOpen = $state(false);
+
+  const settings = getSettings();
+  const updateState = getUpdateState();
 
   onMount(async () => {
-    await Promise.all([fetchInstallPath(), fetchAppVersion()]);
+    await Promise.all([fetchAppVersion(), loadSettings()]);
     isLoading = false;
   });
-
-  async function fetchInstallPath() {
-    const result = await commands.getInstallPath();
-    if (result.status === "ok") {
-      installPath = result.data;
-    }
-  }
 
   async function fetchAppVersion() {
     try {
@@ -32,16 +41,24 @@
     }
   }
 
-  async function openInstallFolder() {
-    if (installPath) {
-      try {
-        await revealItemInDir(installPath);
-      } catch (e) {
-        toast.error("폴더 열기 실패", { description: String(e) });
-      }
+
+  async function handleAutoCheckUpdateChange(checked: boolean) {
+    await setAutoCheckUpdate(checked);
+  }
+
+  async function handleManualUpdateCheck() {
+    const update = await checkForUpdate();
+    if (update) {
+      updateDialogOpen = true;
+    } else if (!updateState.error) {
+      toast.success("최신 버전입니다");
+    } else {
+      toast.error("업데이트 확인 실패", { description: updateState.error });
     }
   }
 </script>
+
+<UpdateDialog bind:open={updateDialogOpen} />
 
 <main class="bg-background p-8">
   <div class="mx-auto max-w-xl space-y-6">
@@ -51,44 +68,39 @@
       <h1 class="text-2xl font-bold">설정</h1>
     </div>
 
-
-    <!-- Install Path Card -->
-    <!--
+    <!-- Update Settings Card -->
     <Card>
       <CardHeader>
-        <CardTitle class="text-base font-medium">Path of Building 설치 경로</CardTitle>
+        <CardTitle class="text-base font-medium">업데이트</CardTitle>
       </CardHeader>
       <CardContent class="space-y-4">
         <div class="flex items-center justify-between">
-          <span class="text-sm text-muted-foreground">경로</span>
-          {#if isLoading}
-            <span class="text-sm text-muted-foreground">불러오는 중...</span>
-          {:else if installPath}
-            <span class="font-mono text-sm truncate max-w-[300px]" title={installPath}>
-              {installPath}
-            </span>
-          {:else}
-            <span class="text-sm text-muted-foreground">설정되지 않음</span>
-          {/if}
+          <Label for="auto-update" class="text-sm">
+            시작 시 자동으로 업데이트 확인
+          </Label>
+          <Switch
+            id="auto-update"
+            checked={settings.autoCheckUpdate}
+            onCheckedChange={handleAutoCheckUpdateChange}
+            disabled={isLoading}
+          />
         </div>
         <div class="flex items-center justify-between">
+          <span class="text-sm text-muted-foreground">수동으로 확인</span>
           <Button
             variant="outline"
             size="sm"
-            onclick={openInstallFolder}
-            disabled={!installPath}
+            onclick={handleManualUpdateCheck}
+            disabled={updateState.checking}
             class="gap-2"
           >
-            <FolderOpen class="h-4 w-4" />
-            폴더 열기
+            <RefreshCw class="h-4 w-4 {updateState.checking ? 'animate-spin' : ''}" />
+            {updateState.checking ? "확인 중..." : "업데이트 확인"}
           </Button>
         </div>
-        <p class="text-xs text-muted-foreground">
-          설치 경로 변경 기능은 추후 지원 예정입니다.
-        </p>
       </CardContent>
     </Card>
-  -->
+
     <!-- App Info Card -->
     <Card>
       <CardHeader>

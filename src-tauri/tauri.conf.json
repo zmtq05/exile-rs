@@ -32,6 +32,15 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDM1RTg4NTI5QUIwNzZBQjcKUldTM2FnZXJLWVhvTlh4NlZzdno3Y1pENEZkcXdKWGJ5T1JMT1c3bkROSjlTS0dHOS83c09La2gK",
+      "endpoints": [
+        "https://github.com/zmtq05/exile-rs/releases/latest/download/latest.json"
+      ]
+    }
   }
 }
