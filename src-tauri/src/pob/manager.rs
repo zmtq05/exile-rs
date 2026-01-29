@@ -111,6 +111,8 @@ impl PobManager {
         use futures_util::StreamExt;
         use tokio::io::{AsyncWriteExt, BufWriter};
 
+        const DOWNLOAD_BUFFER_SIZE: usize = 64 * 1024;
+
         let res = self.client.get_file(file_id).await?;
         let total_size = res.content_length().unwrap_or(0);
 
@@ -134,7 +136,7 @@ impl PobManager {
 
         let start = Instant::now();
         let mut stream = res.bytes_stream();
-        let mut writer = BufWriter::with_capacity(64 * 1024, f);
+        let mut writer = BufWriter::with_capacity(DOWNLOAD_BUFFER_SIZE, f);
 
         let mut downloaded: u64 = 0;
         let mut last_report = start;

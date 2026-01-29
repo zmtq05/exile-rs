@@ -8,6 +8,8 @@ use serde::Serialize;
 use specta::Type;
 use tauri_specta::Event;
 
+const PROGRESS_THROTTLE_MS: u64 = 100;
+
 // ============================================================================
 // Progress Sink Abstraction
 // ============================================================================
@@ -57,8 +59,8 @@ impl TauriProgressSink {
         Self {
             app,
             // Initialize in the past to allow first emit immediately
-            last_emit: Mutex::new(Instant::now() - Duration::from_millis(200)),
-            throttle_duration: Duration::from_millis(100),
+            last_emit: Mutex::new(Instant::now() - Duration::from_millis(2 * PROGRESS_THROTTLE_MS)),
+            throttle_duration: Duration::from_millis(PROGRESS_THROTTLE_MS),
         }
     }
 }
